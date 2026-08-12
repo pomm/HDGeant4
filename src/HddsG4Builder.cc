@@ -20,6 +20,7 @@
 #include <G4Sphere.hh>
 #include <G4Polycone.hh>
 #include <G4Polyhedra.hh>
+#include <G4EllipticalTube.hh>
 #include <G4SystemOfUnits.hh>
 #include <G4Mag_UsualEqRhs.hh>
 #include <G4MagIntegratorStepper.hh>
@@ -27,6 +28,23 @@
 #include <G4HelixMixedStepper.hh>
 #include <G4ClassicalRK4.hh>
 #include <G4ChordFinder.hh>
+#include <G4PVPlacement.hh>
+#include <G4PVDivision.hh>
+#include <G4OpticalSurface.hh>
+#include <G4LogicalSkinSurface.hh>
+#include <G4VisAttributes.hh>
+
+#include <xercesc/util/PlatformUtils.hpp>
+#include <xercesc/util/XMLString.hpp>
+#include <xercesc/util/XMLStringTokenizer.hpp>
+#include <xercesc/sax/SAXParseException.hpp>
+#include <xercesc/parsers/XercesDOMParser.hpp>
+#include <xercesc/framework/LocalFileFormatTarget.hpp>
+#include <xercesc/dom/DOM.hpp>
+#include <xercesc/util/XercesDefs.hpp>
+#include <xercesc/sax/ErrorHandler.hpp>
+
+using namespace xercesc;
 
 #include <assert.h>
 #include <stdlib.h>
@@ -134,15 +152,15 @@ int HddsG4Builder::createMaterial(DOMElement* el)
          DOMElement* specEl = (DOMElement*)specL->item(i);
          XString valS;
          valS = specEl->getAttribute(X("E"));
-         Ephot.push_back(atof(S(valS)));
+         Ephot.push_back(atof(S(valS))*eV);
          valS = specEl->getAttribute(X("refindex"));
          rindex.push_back(atof(S(valS)));
          valS = specEl->getAttribute(X("abslen"));
-         abslen.push_back(atof(S(valS)));
+         abslen.push_back(atof(S(valS))*cm);
          valS = specEl->getAttribute(X("smooth"));
          smooth.push_back(atof(S(valS)));
          valS = specEl->getAttribute(X("reflect"));
-         reflect.push_back(atof(S(valS)));;
+         reflect.push_back(atof(S(valS)));
          valS = specEl->getAttribute(X("effic"));
          effic.push_back(atof(S(valS)));
       }
@@ -280,7 +298,7 @@ int HddsG4Builder::createSolid(DOMElement* el, Refsys& ref)
       std::vector<double> rInner;
       std::vector<double> rOuter;
       double zlast = -1e30;
-      double zeps = 1e-5;
+      double zeps = 0;
       for (unsigned int p = 0; p < planeList->getLength(); p++)
       {
          double ri, ro, zl;
@@ -327,7 +345,7 @@ int HddsG4Builder::createSolid(DOMElement* el, Refsys& ref)
       std::vector<double> rInner;
       std::vector<double> rOuter;
       double zlast = -1e30;
-      double zeps = 1e-5;
+      double zeps = 0;
       for (unsigned int p = 0; p < planeList->getLength(); p++)
       {
          double ri, ro, zl;
@@ -433,13 +451,66 @@ int HddsG4Builder::createSolid(DOMElement* el, Refsys& ref)
    G4MaterialPropertiesTable *mpt = fMaterials[imate]->GetMaterialPropertiesTable();
    if (mpt)
    {
-      G4OpticalSurface *surface = new G4OpticalSurface(S(nameS));
-      surface->SetType(dielectric_metal);
-      surface->SetFinish(ground);
-      surface->SetModel(glisur);
-      double polish = mpt->GetProperty("POLISH")->GetMaxValue();
-      surface->SetPolish(polish);
-      new G4LogicalSkinSurface(S(nameS),fLogicalVolumes[newvol],surface);
+      G4MaterialPropertyVector *poli_vector = mpt->GetProperty("POLISH");
+      G4MaterialPropertyVector *refl_vector = mpt->GetProperty("REFLECTIVITY");
+      G4MaterialPropertyVector *refi_vector = mpt->GetProperty("RINDEX");
+      G4MaterialPropertyVector *absl_vector = mpt->GetProperty("ABSLENGTH");
+      G4MaterialPropertyVector *effi_vector = mpt->GetProperty("EFFICIENCY");
+      if (refi_vector == 0) {
+         if (refl_vector == 0) {
+            G4cerr << APP_NAME << " error: material " << mate->GetName()
+                   << " needs to have either refindex defined (dielectrics)"
+                   << " or else reflect (metals) but it has neither!"
+                   << G4endl;
+            exit(1);
+         }
+         if (absl_vector != 0) {
+            G4cerr << APP_NAME << " error: material " << mate->GetName()
+                   << " has abslen defined but no refindex; defining abslen"
+                   << " requires that refindex also be specified!"
+                   << G4endl;
+            exit(1);
+         }
+         if (poli_vector != 0 || effi_vector != 0) {
+            G4OpticalSurface *surface = new G4OpticalSurface(S(nameS));
+            surface->SetType(dielectric_metal);
+            surface->SetModel(glisur);
+            surface->SetMaterialPropertiesTable(mpt);
+            if (poli_vector != 0) {
+               double polish = poli_vector->GetMaxValue();
+               surface->SetPolish(polish);
+               surface->SetFinish(ground);
+            }
+            else {
+               surface->SetFinish(polished);
+            }
+            new G4LogicalSkinSurface(S(nameS),fLogicalVolumes[newvol],surface);
+         }
+      }
+      else if (refl_vector == 0) {
+         if (poli_vector != 0) {
+            G4OpticalSurface *surface = new G4OpticalSurface(S(nameS));
+            surface->SetType(dielectric_dielectric);
+            surface->SetModel(glisur);
+            surface->SetMaterialPropertiesTable(mpt);
+            if (poli_vector != 0) {
+               double polish = poli_vector->GetMaxValue();
+               surface->SetPolish(polish);
+               surface->SetFinish(ground);
+            }
+            else {
+               surface->SetFinish(polished);
+            }
+            new G4LogicalSkinSurface(S(nameS),fLogicalVolumes[newvol],surface);
+         }
+      }
+      else {
+         G4cerr << APP_NAME << " error: material " << mate->GetName()
+                << " has optical properties, but neither refindex nor reflect"
+                << " data are provided, you need either one or the other!"
+                << G4endl;
+         exit(1);
+      }
    }
 
 #ifdef LINUX_CPUTIME_PROFILING
@@ -667,6 +738,8 @@ HddsG4Builder::addNewLayer(int volume_id, int layer)
                                   placement->first.second);
 #ifdef CHECK_OVERLAPS_MM
       playerN->CheckOverlaps(1000,CHECK_OVERLAPS_MM);
+#else
+      (void)playerN;
 #endif
 #ifdef DEBUG_PLACEMENT 
       G4cout << "volume " << str.str() 
@@ -699,6 +772,7 @@ HddsG4Builder::addNewLayer(int volume_id, int layer)
                                    fLogicalVolumes[newvol],
                                    moms->second,
                                    axis, ndiv, width, offset);
+      (void)divisionN;
       fLogicalVolumes[newvol]->SetVisAttributes(new G4VisAttributes(false));
 #ifdef DEBUG_PLACEMENT 
       G4cout << ndiv << " copies of division " << str.str() 
@@ -1183,7 +1257,7 @@ void HddsG4Builder::createMapFunctions(DOMElement* el, const XString& ident)
             sunit.getConversions(sampleEl);
             std::stringstream listr(boundsS);
             listr >> bound[0] >> bound[1];
-            int iaxis;
+            int iaxis=0;
             if (gridtype == "cartesian")
             {
                if (axisS == "x" && 
@@ -1390,7 +1464,7 @@ void HddsG4Builder::addReflections(int volume_id)
         ++mine)
    {
       G4FieldManager* fieldmgr = mine->second->GetFieldManager();
-      for (int child = 0; child < mine->second->GetNoDaughters(); ++child) {
+      for (int child = 0; child < (int)mine->second->GetNoDaughters(); ++child) {
          G4VPhysicalVolume* pvol = mine->second->GetDaughter(child);
          G4LogicalVolume* lvol = pvol->GetLogicalVolume();
          G4FieldManager* mgr = lvol->GetFieldManager();
@@ -1445,20 +1519,20 @@ void HddsG4Builder::addReflections(int volume_id)
                fCurrentPlacement[childId] = piter;
             }
             fCurrentMother[childId] = mine;
-            std::vector<int>::iterator liter;
-            for (liter = layer.begin(); liter != layer.end(); ++liter) {
-               if (*liter > mine->first.second) {
+            std::vector<int>::iterator literi;
+            for (literi = layer.begin(); literi != layer.end(); ++literi) {
+               if (*literi > mine->first.second) {
 #if DEBUG_REFLECTION
                   G4cout << "HddsG4Builder::addReflections info - "
                          << "reflected volume " << lvol->GetName()
                          << " copy " << cpy.second
                          << " in mother " << mine->second->GetName()
-                         << " onto layer " << *liter
+                         << " onto layer " << *literi
                          << " because child field manager " << mgr
                          << " is different from mother field manager " << fieldmgr
                          << G4endl;
 #endif
-                  addNewLayer(childId, *liter);
+                  addNewLayer(childId, *literi);
                }
             }
          }

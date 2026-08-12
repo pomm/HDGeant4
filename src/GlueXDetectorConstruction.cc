@@ -4,35 +4,35 @@
 // author: richard.t.jones at uconn.edu
 // version: may 12, 2012
  
-#include "GlueXDetectorConstruction.hh"
-#include "GlueXDetectorMessenger.hh"
-#include "GlueXMagneticField.hh"
-
+#include "GlueXSensitiveDetectorDIRC.hh"
 #include "GlueXSensitiveDetectorCDC.hh"
 #include "GlueXSensitiveDetectorFDC.hh"
 #include "GlueXSensitiveDetectorSTC.hh"
 #include "GlueXSensitiveDetectorBCAL.hh"
 #include "GlueXSensitiveDetectorFCAL.hh"
+#include "GlueXSensitiveDetectorFCALinsert.hh"
 #include "GlueXSensitiveDetectorGCAL.hh"
 #include "GlueXSensitiveDetectorCCAL.hh"
+#include "GlueXSensitiveDetectorECAL.hh"
 #include "GlueXSensitiveDetectorFTOF.hh"
-#include "GlueXSensitiveDetectorDIRC.hh"
 #include "GlueXSensitiveDetectorCERE.hh"
 #include "GlueXSensitiveDetectorFMWPC.hh"
 #include "GlueXSensitiveDetectorUPV.hh"
 #include "GlueXSensitiveDetectorPSC.hh"
 #include "GlueXSensitiveDetectorPS.hh"
 #include "GlueXSensitiveDetectorTPOL.hh"
+#include "GlueXSensitiveDetectorCTOF.hh"
 
-#include "G4Box.hh"
-#include "G4Material.hh"
+#include "GlueXDetectorConstruction.hh"
+#include "GlueXDetectorMessenger.hh"
+#include "GlueXMagneticField.hh"
+#include "HddmOutput.hh"
+
+#include "G4Version.hh"
 #include "G4LogicalVolume.hh"
 #include "G4PVPlacement.hh"
-#include "G4PVParameterised.hh"
 #include "G4SDManager.hh"
-#include "G4GeometryTolerance.hh"
-#include "G4GeometryManager.hh"
-#include "G4MTRunManager.hh"
+#include "G4RunManager.hh"
 #include "G4LogicalVolumeStore.hh"
 #include "G4TransportationManager.hh"
 #include "G4MagIntegratorDriver.hh"
@@ -42,11 +42,9 @@
 #include "G4HelixMixedStepper.hh"
 #include "G4ClassicalRK4.hh"
 
-#include "G4UserLimits.hh"
 #include "G4SystemOfUnits.hh"
 
 #include "G4VisAttributes.hh"
-#include "G4Colour.hh"
 
 #include "G4ios.hh"
 
@@ -80,7 +78,8 @@ std::list<GlueXDetectorConstruction*> GlueXDetectorConstruction::fInstance;
 GlueXDetectorConstruction::GlueXDetectorConstruction(G4String hddsFile)
 : fMaxStep(0),
   fUniformField(0),
-  fpMagneticField(0)
+  fpMagneticField(0),
+  fGeometryXML(0)
 {
    G4AutoLock barrier(&fMutex);
    fInstance.push_back(this);
@@ -103,73 +102,94 @@ GlueXDetectorConstruction::GlueXDetectorConstruction(G4String hddsFile)
       XString message(toCatch.getMessage());
       G4cerr << APP_NAME << " - error during xercesc initialization!"
              << G4endl << S(message) << G4endl;
-      return;
+      exit(1);
    }
 
-   XString xmlFile;
+   DOMDocument* document;
    if (hddsFile.size() > 0)
    {
-      xmlFile = hddsFile.c_str();
+      int size=100;
+      char *saved_cwd = new char[size];
+      while (getcwd(saved_cwd, size) == 0)
+      {
+         delete [] saved_cwd;
+         saved_cwd = new char[size *= 2];
+      }
+      XString xmlFile = hddsFile.c_str();
+      char *dirpath = new char[hddsFile.size() + 2];
+      if (chdir(dirname(strcpy(dirpath, hddsFile.c_str()))) != 0) {
+          G4cerr << "Error: Could not change directory to " << dirpath << G4endl;
+          exit(1);
+      }
+      document = buildDOMDocument(xmlFile,false);
+      if (chdir(saved_cwd) != 0) {
+          G4cerr << "Error: Could not return to original directory!" << G4endl;
+          exit(1);
+      }
+      delete [] saved_cwd;
+      delete [] dirpath;
    }
    else if (getenv("JANA_GEOMETRY_URL"))
    {
-      hddsFile = getenv("JANA_GEOMETRY_URL");
-      if (hddsFile.index("xmlfile://") == 0)
+#ifndef FORCE_HDDS_FILES_PARSING
+      std::string url = getenv("JANA_GEOMETRY_URL");
+      int run = HddmOutput::getRunNo();
+      fGeometryXML = new HddsGeometryXML(url, run);
+      last_md5_checksum = fGeometryXML->GetChecksum();
+      document = fGeometryXML->getDocument();
+#else
+      int size=100;
+      char *saved_cwd = new char[size];
+      while (getcwd(saved_cwd, size) == 0)
       {
-         hddsFile.remove(0,10);
-         xmlFile = hddsFile.c_str();
+         delete [] saved_cwd;
+         saved_cwd = new char[size *= 2];
       }
-      else
-      {
-         G4cerr << APP_NAME << " - unsupported protocol for JANA_GEOMETRY_URL"
-                << G4endl << getenv("JANA_GEOMETRY_URL") << G4endl;
-         return;
-      }
+      XString hddsdir = getenv("HDDS_HOME");
+      chdir(hddsdir.c_str());
+      XString xmlFile = "main_HDDS.xml";
+      document = buildDOMDocument(xmlFile,false);
+      chdir(saved_cwd);
+      delete [] saved_cwd;
+#endif
    }
    else {
       G4cerr << APP_NAME << " - no hdds geometry file specified!"
-             << G4endl;
-      return;
+             << " Cannot continue" << G4endl;
+      exit(9);
    }
-   
-   int size=100;
-   char *saved_cwd = new char[size];
-   while (getcwd(saved_cwd, size) == 0)
-   {
-      delete [] saved_cwd;
-      saved_cwd = new char[size *= 2];
-   }
-   char *dirpath = new char[hddsFile.size() + 2];
-   chdir(dirname(strcpy(dirpath, hddsFile.c_str())));
-   DOMDocument* document = buildDOMDocument(xmlFile,false);
    if (document == 0)
    {
       G4cerr << APP_NAME << " - error parsing HDDS document, "
              << "cannot continue" << G4endl;
-      return;
+      exit(9);
    }
-   chdir(saved_cwd);
-   delete [] saved_cwd;
-   delete [] dirpath;
 
-   DOMNode* docEl;
    try {
-      docEl = document->getDocumentElement();
+      (void)document->getDocumentElement();
    }
    catch (DOMException& e) {
       G4cerr << APP_NAME << " - Woops " << e.msg << G4endl;
-      return;
+      exit(9);
    }
 
    DOMElement* rootEl = document->getElementById(X("everything"));
    if (rootEl == 0)
    {
       G4cerr << APP_NAME << " - error scanning HDDS document, " << G4endl
-             << "  no element named \"everything\" found" << G4endl;
-      return;
+             << "  no element named \"everything\" found, "
+             << "cannot continue" << G4endl;
+      exit(9);
    }
 
-   fHddsBuilder.translate(rootEl);
+   try {
+      fHddsBuilder.translate(rootEl);
+   }
+   catch (const DOMException &e) {
+      G4cerr << APP_NAME << " - error scanning HDDS document, "
+             << XString(e.getMessage()) << G4endl;
+      exit(1);
+   }
 
    XMLPlatformUtils::Terminate();
 }
@@ -200,6 +220,7 @@ const GlueXDetectorConstruction *GlueXDetectorConstruction::GetInstance()
    // application obtain the primary instance, if any. If none has
    // yet been constructed, it returns zero.
 
+   G4AutoLock barrier(&fMutex);
    if (fInstance.size() > 0)
       return *fInstance.begin();
    return 0;
@@ -209,6 +230,7 @@ const HddsG4Builder *GlueXDetectorConstruction::GetBuilder()
 {
    // Return a const pointer to the internal HddsG4Builder object.
 
+   G4AutoLock barrier(&fMutex);
    if (fInstance.size() > 0)
       return &(*fInstance.begin())->fHddsBuilder;
    return 0;
@@ -260,8 +282,10 @@ void GlueXDetectorConstruction::ConstructSDandField()
    GlueXSensitiveDetectorSTC* stcHandler = 0;
    GlueXSensitiveDetectorBCAL* bcalHandler = 0;
    GlueXSensitiveDetectorFCAL* fcalHandler = 0;
+   GlueXSensitiveDetectorFCALinsert* fcalInsertHandler = 0;
    GlueXSensitiveDetectorGCAL* gcalHandler = 0;
    GlueXSensitiveDetectorCCAL* ccalHandler = 0;
+   GlueXSensitiveDetectorECAL* ecalHandler = 0;
    GlueXSensitiveDetectorFTOF* ftofHandler = 0;
    GlueXSensitiveDetectorDIRC* dircHandler = 0;
    GlueXSensitiveDetectorCERE* cereHandler = 0;
@@ -270,6 +294,7 @@ void GlueXDetectorConstruction::ConstructSDandField()
    GlueXSensitiveDetectorPSC* pscHandler = 0;
    GlueXSensitiveDetectorPS* psHandler = 0;
    GlueXSensitiveDetectorTPOL* tpolHandler = 0;
+   GlueXSensitiveDetectorCTOF* ctofHandler = 0;
 
    // During geometry building, certain logical volumes were marked as
    // sensitive by adding them to a list. Now we need to go down that
@@ -330,12 +355,19 @@ void GlueXDetectorConstruction::ConstructSDandField()
          }
          iter->second->SetSensitiveDetector(bcalHandler);
       }
-      else if (volname == "LGBL") {
+      else if (volname == "LGBL" || volname == "LGLG") {
          if (fcalHandler == 0) {
             fcalHandler = new GlueXSensitiveDetectorFCAL("fcal");
             SDman->AddNewDetector(fcalHandler);
          }
          iter->second->SetSensitiveDetector(fcalHandler);
+      }
+     else if (volname == "LTB1") {
+         if (fcalHandler == 0) {
+            fcalInsertHandler = new GlueXSensitiveDetectorFCALinsert("fcalinsert");
+            SDman->AddNewDetector(fcalInsertHandler);
+         }
+         iter->second->SetSensitiveDetector(fcalInsertHandler);
       }
       else if (volname == "GCAL") {
          if (gcalHandler == 0) {
@@ -351,17 +383,52 @@ void GlueXDetectorConstruction::ConstructSDandField()
          }
          iter->second->SetSensitiveDetector(ccalHandler);
       }
-      else if (volname == "FTOC" || volname == "FTOX" || volname == "FTOH") {
+      else if (volname == "XTBL") {
+         if (ecalHandler == 0) {
+            ecalHandler = new GlueXSensitiveDetectorECAL("ecal");
+            SDman->AddNewDetector(ecalHandler);
+         }
+         iter->second->SetSensitiveDetector(ecalHandler);
+      }
+      else if (volname == "FTOC" || volname == "FTOX" || 
+               volname == "FTOH" || volname == "FTOL")
+      {
          if (ftofHandler == 0) {
             ftofHandler = new GlueXSensitiveDetectorFTOF("ftof");
             SDman->AddNewDetector(ftofHandler);
          }
          iter->second->SetSensitiveDetector(ftofHandler);
       }
-      else if (volname == "RDCD") {
+      else if (volname == "CTOF")
+      {
+         if (ctofHandler == 0) {
+            ctofHandler = new GlueXSensitiveDetectorCTOF("ctof");
+            SDman->AddNewDetector(ctofHandler);
+         }
+         iter->second->SetSensitiveDetector(ctofHandler);
+      }
+      // radiator volume: BNNM (NN = bar number 0-47 and M is sub-bar character A-D)
+      else if (volname == "PIXV" || 
+               (volname[0] == 'B' && 
+                10*((int)volname[1]-48)+(int)volname[2]-48 >= 0 &&
+                10*((int)volname[1]-48)+(int)volname[2]-48 < 48))
+      {  // this is nasty, but it works
          if (dircHandler == 0) {
             dircHandler = new GlueXSensitiveDetectorDIRC("dirc");
             SDman->AddNewDetector(dircHandler);
+         }
+         iter->second->SetSensitiveDetector(dircHandler);
+      }
+      else if (volname == "WM1N" || volname == "WM2N" || volname == "WM1S" || volname == "WM2S" ||
+               volname == "FTMN" || volname == "FTMS" ||
+               volname == "TM1N" || volname == "TM2N" || volname == "TM3N" ||
+               volname == "TM1S" || volname == "TM2S" || volname == "TM3S" ||
+               volname == "SM1N" || volname == "SM2N" || volname == "SM1S" || volname == "SM2S" ||
+               volname == "OWDG" || volname(0,2) == "AG" )
+      {
+         if (dircHandler == 0) {
+           dircHandler = new GlueXSensitiveDetectorDIRC("dirc");
+           SDman->AddNewDetector(dircHandler);
          }
          iter->second->SetSensitiveDetector(dircHandler);
       }
@@ -437,8 +504,13 @@ void GlueXDetectorConstruction::CloneF()
             // First time we see this FM, let's clone and remember...
 
             G4ChordFinder *cfinder = masterFM->GetChordFinder();
+#if G4VERSION_NUMBER >= 1040
+            G4VIntegrationDriver *midriver = cfinder->GetIntegrationDriver();
+            double stepMinimum = 1e-2;
+#else
             G4MagInt_Driver *midriver = cfinder->GetIntegrationDriver();
             double stepMinimum = midriver->GetHmin();
+#endif
             G4MagIntegratorStepper *stepper = midriver->GetStepper();
             const G4Field *field = masterFM->GetDetectorField();
 
@@ -515,7 +587,7 @@ int GlueXDetectorConstruction::GetParallelWorldCount() const
 G4String GlueXDetectorConstruction::GetParallelWorldName(int paraIndex) const
 {
    std::stringstream worldStr;
-   worldStr << "Parallel World " << paraIndex;
+   worldStr << "ParallelWorld" << paraIndex;
    return worldStr.str();
 }
 

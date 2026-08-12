@@ -12,14 +12,10 @@
 #define GlueXSensitiveDetectorFMWPC_h 1
 
 #include "G4VSensitiveDetector.hh"
-#include "G4VPhysicalVolume.hh"
-#include "G4Threading.hh"
 #include "G4AutoLock.hh"
 
 #include "GlueXHitFMWPCwire.hh"
 #include "GlueXHitFMWPCpoint.hh"
-
-#include <vector>
 
 class G4Step;
 class G4HCofThisEvent;
@@ -42,11 +38,17 @@ class GlueXSensitiveDetectorFMWPC : public G4VSensitiveDetector
    GlueXHitsMapFMWPCwire* fWireHitsMap;
    GlueXHitsMapFMWPCpoint* fPointsMap;
 
-   static std::map<G4LogicalVolume*, int> fVolumeTable;
+   std::map<G4LogicalVolume*, int> fVolumeTable;
 
    static int MAX_HITS;
    static double TWO_HIT_TIME_RESOL;
    static double THRESH_KEV;
+   static double WIRE_OFFSET;
+   static double WIRE_PITCH;
+   static const double ELECTRON_CHARGE;
+   static double GAS_GAIN;
+   static double W_EFF_PER_ION;
+   static double N_SECOND_PER_PRIMARY;
 
    static int instanceCount;
    static G4Mutex fMutex;

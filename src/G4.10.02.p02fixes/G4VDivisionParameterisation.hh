@@ -52,6 +52,66 @@ enum DivisionType { DivNDIVandWIDTH, DivNDIV, DivWIDTH };
 class G4VPhysicalVolume;
 class G4VSolid;
 
+template <class T> class G4Splitter {
+ private:
+   G4int totalobj;
+
+ public:
+   static G4ThreadLocal G4int workertotalspace;
+   static G4ThreadLocal T* offset;
+
+ public:
+   G4Splitter() : totalobj(0) {}
+   G4int CreateSubInstance() {
+      totalobj++;
+      if (totalobj > workertotalspace)
+         NewSubInstances();
+      return totalobj - 1;
+   }
+   void NewSubInstances() {
+      if (workertotalspace >=totalobj)
+         return;
+      G4int originaltotalspace = workertotalspace;
+      workertotalspace = totalobj + 512;
+      offset = (T*) realloc(offset, workertotalspace * sizeof(T));
+      if (offset == 0)
+         G4Exception("G4Splitter::NewSubInstances", "OutOfMemory",
+                     FatalException, "Cannot malloc space!");
+      for (G4int i = originaltotalspace; i <  workertotalspace; i++) {
+         offset[i].initialize();
+      }
+   }
+   void InitializeWorker() {
+      while (workertotalspace < totalobj)
+         NewSubInstances();
+   }
+   void FreeWorker() {
+      if (offset == 0)
+         return;
+      delete offset;
+   }
+};
+
+class G4VDivisionData
+{
+  // Encapsulates the fields associated to G4VDivisionData
+  //  that are not read-only - they will change during simulation
+  //  and must have a per-thread state.
+
+  public:
+    G4VDivisionData():fRot(0) {}
+
+    void initialize() {
+      fRot = 0;
+    }
+
+    G4RotationMatrix *fRot;
+};
+
+typedef G4Splitter<G4VDivisionData> G4VDivisionDataManager;
+typedef G4VDivisionDataManager G4VDivisionParameterisationSubInstanceManager;
+#define G4MT_fRot ((subInstanceManager.offset[gClassInstanceId]).fRot) 
+
 class G4VDivisionParameterisation : public G4VPVParameterisation
 { 
   public:  // with description
@@ -105,7 +165,7 @@ class G4VDivisionParameterisation : public G4VPVParameterisation
     G4bool fReflectedSolid;
     G4bool fDeleteSolid;
 
-    static G4ThreadLocal G4RotationMatrix* fRot;
+    //static G4ThreadLocal G4RotationMatrix* fRot;
 
     static const G4int verbose;
     G4int theVoluFirstCopyNo;
@@ -114,7 +174,10 @@ class G4VDivisionParameterisation : public G4VPVParameterisation
 
     G4double fhgap;
 
-    //G4RotationMatrix* fRotMatrix;
+  private:
+
+    G4int gClassInstanceId;
+    static G4VDivisionParameterisationSubInstanceManager subInstanceManager; 
 };
 
 #include "G4VDivisionParameterisation.icc"

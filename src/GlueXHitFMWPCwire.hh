@@ -15,12 +15,13 @@
 #include "G4VHit.hh"
 #include "G4THitsMap.hh"
 #include "G4Allocator.hh"
-#include "G4SystemOfUnits.hh"
 
 class GlueXHitFMWPCwire : public G4VHit
 {
  public:
+   GlueXHitFMWPCwire() {}
    GlueXHitFMWPCwire(G4int layer, G4int wire);
+   GlueXHitFMWPCwire(const GlueXHitFMWPCwire &src);
    int operator==(const GlueXHitFMWPCwire &right) const;
    GlueXHitFMWPCwire &operator+=(const GlueXHitFMWPCwire &right);
 
@@ -38,9 +39,8 @@ class GlueXHitFMWPCwire : public G4VHit
    struct hitinfo_t {
       G4double dE_keV;     // energy loss (keV)
       G4double t_ns;       // pulse leading-edge time (ns)
-      G4double dx_cm;      // track length in active region
+      G4double d_cm;      // doca to wire 
       G4int itrack_;       // number of track creating the hit
-      G4double z0_cm;      // track global coordinate (cm)
    };
    std::vector<hitinfo_t> hits;
 

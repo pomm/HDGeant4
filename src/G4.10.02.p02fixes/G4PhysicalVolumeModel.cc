@@ -45,6 +45,8 @@
 #include "G4BoundingSphereScene.hh"
 #include "G4PhysicalVolumeSearchScene.hh"
 #include "G4TransportationManager.hh"
+#include "G4Polycone.hh"
+#include "G4Polyhedra.hh"
 #include "G4Polyhedron.hh"
 #include "HepPolyhedronProcessor.h"
 #include "G4AttDefStore.hh"
@@ -721,6 +723,53 @@ void G4PhysicalVolumeModel::DescribeSolid
 	(pVisAttribs->GetForcedLineSegmentsPerCircle());
     else
       G4Polyhedron::SetNumberOfRotationSteps(fpMP->GetNoOfSides());
+
+    // Special treatment for G4PolyHedra and G4Polycone
+
+    G4Polyhedra *polyhedr = dynamic_cast<G4Polyhedra*>(pSol);
+    G4Polycone *polycone = dynamic_cast<G4Polycone*>(pSol);
+    if (polyhedr) {
+      G4PolyhedraHistorical pars(*polyhedr->GetOriginalParameters());
+      for (int p=1; p < pars.Num_z_planes; ++p) {
+        if (pars.Z_values[p] <= pars.Z_values[p-1])
+          pars.Z_values[p] = pars.Z_values[p] + 1e-3;
+      }
+      //
+      // Calculate conversion factor from G3 radius to G4 radius
+      //
+      G4double phiTotal = pars.Opening_angle;
+      G4double twopi = 2 * M_PI;
+      if ( (phiTotal <=0) || (phiTotal >= twopi*(1-DBL_EPSILON)) )
+         phiTotal = twopi;
+      G4double convertRad = std::cos(0.5*phiTotal/pars.numSide);
+      for (int iz=0; iz < pars.Num_z_planes; ++iz) {
+         pars.Rmin[iz] *= convertRad;
+         pars.Rmax[iz] *= convertRad;
+      }
+      G4String visname(pSol->GetName() + "_visual");
+      pSol = new G4Polyhedra(visname, pars.Start_angle, 
+                                      pars.Opening_angle, 
+                                      pars.numSide,
+                                      pars.Num_z_planes,
+                                      pars.Z_values,
+                                      pars.Rmin,
+                                      pars.Rmax);
+    }
+    else if (polycone) {
+      G4PolyconeHistorical pars(*polycone->GetOriginalParameters());
+      for (int p=1; p < pars.Num_z_planes; ++p) {
+        if (pars.Z_values[p] <= pars.Z_values[p-1])
+          pars.Z_values[p] = pars.Z_values[p] + 1e-3;
+      }
+      G4String visname(pSol->GetName() + "_visual");
+      pSol = new G4Polycone(visname, pars.Start_angle, 
+                                     pars.Opening_angle, 
+                                     pars.Num_z_planes,
+                                     pars.Z_values,
+                                     pars.Rmin,
+                                     pars.Rmax);
+    }
+
     const G4Polyhedron* pOriginal = pSol->GetPolyhedron();
     //G4Polyhedron::ResetNumberOfRotationSteps();
 

@@ -15,12 +15,13 @@
 #include "G4VHit.hh"
 #include "G4THitsMap.hh"
 #include "G4Allocator.hh"
-#include "G4SystemOfUnits.hh"
 
 class GlueXHitBCALcell : public G4VHit
 {
  public:
+   GlueXHitBCALcell() {}
    GlueXHitBCALcell(G4int module, G4int layer, G4int sector);
+   GlueXHitBCALcell(const GlueXHitBCALcell &src);
    int operator==(const GlueXHitBCALcell &right) const;
    GlueXHitBCALcell &operator+=(const GlueXHitBCALcell &right);
 
@@ -37,10 +38,14 @@ class GlueXHitBCALcell : public G4VHit
    G4int sector_;          // cell sector number, from 1 advancing phi
 
    struct hitinfo_t {
-      G4double E_GeV;      // energy deposition (GeV)
-      G4double t_ns;       // pulse leading-edge time (ns)
-      G4double zlocal_cm;  // z coordinate of the hit in local refsys
-      G4double itrack_;    // id of particle that generated this shower
+      G4double E_GeV;       // energy deposition (GeV)
+      G4double t_ns;        // pulse leading-edge time (ns)
+      G4double zlocal_cm;   // z coordinate of the hit in local refsys
+      G4double incidentId_; // id of particle that generated this shower
+      G4double Eup_GeV;     // upstream end energy deposition (GeV)
+      G4double Edown_GeV;   // downstream end energy deposition (GeV)
+      G4double tup_ns;      // upstream end pulse leading-edge time (ns)
+      G4double tdown_ns;    // downstream end pulse leading-edge time (ns)
    };
    std::vector<hitinfo_t> hits;
 

@@ -15,13 +15,14 @@
 #include "G4Threading.hh"
 #include "G4AutoLock.hh"
 
-#include "globals.hh"
-#include "G4SystemOfUnits.hh"
 #include "G4VUserDetectorConstruction.hh"
 #include <G4VUserParallelWorld.hh>
 #include <G4ThreeVector.hh>
-#include <GlueXMagneticField.hh>
 #include <HddsG4Builder.hh>
+#include <HddsGeometryXML.hh>
+#include <GlueXMagneticField.hh>
+
+#include "G4SystemOfUnits.hh"
 
 class G4Box;
 class G4LogicalVolume;
@@ -71,6 +72,9 @@ class GlueXDetectorConstruction : public G4VUserDetectorConstruction
 
      static G4Mutex fMutex;
      static std::list<GlueXDetectorConstruction*> fInstance;
+
+  protected:
+     HddsGeometryXML *fGeometryXML;
 };
 
 class GlueXParallelWorld : public G4VUserParallelWorld

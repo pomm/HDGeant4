@@ -8,28 +8,43 @@
 
 G4ThreadLocal G4Allocator<GlueXHitTPOLpoint>* GlueXHitTPOLpointAllocator = 0;
 
-int GlueXHitTPOLpoint::operator==(const GlueXHitTPOLpoint &right) const
+GlueXHitTPOLpoint::GlueXHitTPOLpoint(const GlueXHitTPOLpoint &src)
 {
-   if (E_GeV          == right.E_GeV       &&
-       dEdx_GeV_cm    == right.dEdx_GeV_cm &&
-       primary_       == right.primary_    &&
-       ptype_G3       == right.ptype_G3    &&
-       px_GeV         == right.px_GeV      &&
-       py_GeV         == right.py_GeV      &&
-       pz_GeV         == right.pz_GeV      &&
-       x_cm           == right.x_cm        &&
-       y_cm           == right.y_cm        &&
-       z_cm           == right.z_cm        &&
-       t_ns           == right.t_ns        &&
-       track_         == right.track_      &&
-       trackID_       == right.trackID_    )
-   {
-      return 1;
-   }
-   return 0;
+   E_GeV = src.E_GeV;
+   dEdx_GeV_cm = src.dEdx_GeV_cm;
+   primary_ = src.primary_;
+   ptype_G3 = src.ptype_G3;
+   px_GeV = src.px_GeV;
+   py_GeV = src.py_GeV;
+   pz_GeV = src.pz_GeV;
+   phi_rad = src.phi_rad;
+   r_cm = src.r_cm;
+   t_ns = src.t_ns;
+   track_ = src.track_;
+   trackID_ = src.trackID_;
 }
 
-GlueXHitTPOLpoint &GlueXHitTPOLpoint::operator+=(const GlueXHitTPOLpoint &right)
+int GlueXHitTPOLpoint::operator==(const GlueXHitTPOLpoint &right) const
+{
+   if (E_GeV       != right.E_GeV       ||
+       dEdx_GeV_cm != right.dEdx_GeV_cm ||
+       primary_    != right.primary_    ||
+       ptype_G3    != right.ptype_G3    ||
+       px_GeV      != right.px_GeV      ||
+       py_GeV      != right.py_GeV      ||
+       pz_GeV      != right.pz_GeV      ||
+       phi_rad     != right.phi_rad     ||
+       r_cm        != right.r_cm        ||
+       t_ns        != right.t_ns        ||
+       track_      != right.track_      ||
+       trackID_    != right.trackID_    )
+   {
+      return 0;
+   }
+   return 1;
+}
+
+GlueXHitTPOLpoint &GlueXHitTPOLpoint::operator+=(const GlueXHitTPOLpoint& /* right */)
 {
    G4cerr << "Error in GlueXHitTPOLpoint::operator+= - "
           << "illegal attempt to merge two TruthPoint objects in the tpol!"
@@ -54,9 +69,8 @@ void GlueXHitTPOLpoint::Print() const
           << "   px = " << px_GeV << " GeV/c" << G4endl
           << "   py = " << py_GeV << " GeV/c" << G4endl
           << "   pz = " << pz_GeV << " GeV/c" << G4endl
-          << "   x = " << x_cm << " cm" << G4endl
-          << "   y = " << y_cm << " cm" << G4endl
-          << "   z = " << z_cm << " cm" << G4endl
+          << "   phi = " << phi_rad << " rad" << G4endl
+          << "   r = " << r_cm << " cm" << G4endl
           << "   t = " << t_ns << " ns" << G4endl
           << G4endl;
 }

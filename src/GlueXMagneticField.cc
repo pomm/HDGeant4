@@ -13,18 +13,34 @@
 #include "GlueXMagneticField.hh"
 #include "GlueXUserOptions.hh"
 #include "GlueXDetectorConstruction.hh"
-#include "G4FieldManager.hh"
-#include "G4TransportationManager.hh"
-#include "G4SystemOfUnits.hh"
+#include "HddmOutput.hh"
 
-#include <JANA/JApplication.h>
-#include <JANA/JCalibration.h>
-
+#include <HDGEOMETRY/DMagneticFieldMapPS2DMap.h>
 #include <HDGEOMETRY/DMagneticFieldMapFineMesh.h>
 #include <HDGEOMETRY/DMagneticFieldMapNoField.h>
 #include <HDGEOMETRY/DMagneticFieldMapConst.h>
-#include <HDGEOMETRY/DMagneticFieldMapPS2DMap.h>
 #include <HDGEOMETRY/DMagneticFieldMapPSConst.h>
+
+#include <JANA/JApplication.h>
+#include <JANA/Calibrations/JCalibration.h>
+#include <JANA/Calibrations/JCalibrationManager.h>
+
+// Create my own subclass of DMagneticFieldMapPS2DMap to gain access
+// to protected data members that are needed to counteract application
+// of a spurious z_shift offset that was implemented in that class.
+
+class DMagneticFieldMapPS2DMap_local: public DMagneticFieldMapPS2DMap {
+ public:
+  DMagneticFieldMapPS2DMap_local(JApplication *jappl, int32_t runnumber=1, string namepath = "Magnets/PairSpectrometer/PS_1.8T_20150513_test")
+  : DMagneticFieldMapPS2DMap(jappl, runnumber, namepath) {}
+  DMagneticFieldMapPS2DMap_local(JCalibration *jcali, string namepath = "Magnets/PairSpectrometer/PS_1.8T_20150513_test")
+  : DMagneticFieldMapPS2DMap(jcali, namepath) {}
+  DMagneticFieldMapPS2DMap_local(DMagneticFieldMapPS2DMap &src)
+  : DMagneticFieldMapPS2DMap(src) {}
+
+  double get_z_shift() const { return z_shift; }
+  void set_z_shift(double offset) { z_shift = offset; }
+};
 
 // Implementation code for class GlueXUniformMagField
 
@@ -445,10 +461,17 @@ GlueXComputedMagField::GlueXComputedMagField(G4double Bmax, G4double unit,
    // rotation from xform is performed on B before it is returned to the user.
    // Note that method SetFunction() must be issued before the object is ready
    // for calls to GetFieldValue() or GetMagField().
+
+   fXfinv = xform.Inverse();
 }
 
 GlueXComputedMagField::~GlueXComputedMagField()
-{ }
+{
+   if (fJanaFieldMap)
+      delete fJanaFieldMap;
+   if (fJanaFieldMapPS)
+      delete fJanaFieldMapPS;
+}
       
 GlueXComputedMagField::GlueXComputedMagField(const GlueXComputedMagField &src)
  : G4MagneticField(src)
@@ -466,9 +489,34 @@ GlueXComputedMagField::operator=(const GlueXComputedMagField &src)
    fBmax = src.fBmax;
    fUnit = src.fUnit;
    fXform = src.fXform;
+   fXfinv = src.fXfinv;
    fFunction = src.fFunction;
-   fJanaFieldMap = src.fJanaFieldMap;
-   fJanaFieldMapPS = src.fJanaFieldMapPS;
+   fJanaFieldMap = 0;
+   DMagneticFieldMapFineMesh *mapFineMesh = 0;
+   DMagneticFieldMapNoField *mapNoField = 0;
+   DMagneticFieldMapConst *mapConstField = 0;
+   if (src.fJanaFieldMap) {
+      mapFineMesh = dynamic_cast<DMagneticFieldMapFineMesh*>(src.fJanaFieldMap);
+      mapNoField = dynamic_cast<DMagneticFieldMapNoField*>(src.fJanaFieldMap);
+      mapConstField = dynamic_cast<DMagneticFieldMapConst*>(src.fJanaFieldMap);
+      if (mapFineMesh)
+         fJanaFieldMap = new DMagneticFieldMapFineMesh(*mapFineMesh);
+      else if (mapNoField)
+         fJanaFieldMap = new DMagneticFieldMapNoField(*mapNoField);
+      else if (mapConstField)
+         fJanaFieldMap = new DMagneticFieldMapConst(*mapConstField);
+   }
+   fJanaFieldMapPS = 0;
+   DMagneticFieldMapPS2DMap *mapPS2D = 0;
+   DMagneticFieldMapPSConst *mapPSConst = 0;
+   if (src.fJanaFieldMapPS) {
+      mapPS2D = dynamic_cast<DMagneticFieldMapPS2DMap*>(src.fJanaFieldMapPS);
+      mapPSConst = dynamic_cast<DMagneticFieldMapPSConst*>(src.fJanaFieldMapPS);
+      if (mapPS2D)
+         fJanaFieldMapPS = new DMagneticFieldMapPS2DMap_local(*mapPS2D);
+      else if (mapPSConst)
+         fJanaFieldMapPS = new DMagneticFieldMapPSConst(*mapPSConst);
+   }
    return *this;
 }
 
@@ -487,14 +535,14 @@ void GlueXComputedMagField::SetFunction(std::string function)
    // correct field map key as an input option, eg. through the
    // control.in file.
 
-   extern jana::JApplication *japp;
+   extern JApplication *japp;
    if (japp == 0) {
       G4cerr << "Error in GlueXComputedMagField::SetFunction - "
              << "jana global DApplication object not set, "
              << "cannot continue." << G4endl;
       exit(-1);
    }
-   jana::JParameterManager *jpars = japp->GetJParameterManager();
+   JParameterManager *jpars = japp->GetJParameterManager();
    if (jpars == 0) {
       G4cerr << "Error in GlueXComputedMagField::SetFunction - "
              << "jana global DApplication object returns null "
@@ -509,8 +557,8 @@ void GlueXComputedMagField::SetFunction(std::string function)
       exit(-1);
    }
 
-   extern int run_number;
-   jana::JCalibration *jcalib = japp->GetJCalibration(run_number);
+   int run_number = HddmOutput::getRunNo();
+   JCalibration *jcalib = japp->GetService<JCalibrationManager>()->GetJCalibration(run_number);
 
    if (function == "gufld_db(r,B)") {
 
@@ -520,12 +568,12 @@ void GlueXComputedMagField::SetFunction(std::string function)
       std::map<int, std::string> map_opts;
       GlueXUserOptions::GetInstance()->Find("BFIELDTYPE", type_opts);
       GlueXUserOptions::GetInstance()->Find("BFIELDMAP", map_opts);
-      if (type_opts.size() == 0 || type_opts[1] == "CalibDB") {
+      if (type_opts.find(1) == type_opts.end() || type_opts[1] == "CalibDB") {
 
          // if the magnetic field is specified in control.in
          // then use that value instead of the CCDB values
  
-         if (map_opts.size() > 0) {
+         if (map_opts.find(1) != map_opts.end()) {
             fJanaFieldMap = new DMagneticFieldMapFineMesh(japp, run_number,
                                                           map_opts[1]);
          }
@@ -535,7 +583,7 @@ void GlueXComputedMagField::SetFunction(std::string function)
 
          else {
             std::map<std::string, std::string> map_name;
-            const char *map_key = "/Magnets/Solenoid/solenoid.map";
+            const char *map_key = "/Magnets/Solenoid/solenoid_map";
             if (jcalib->GetCalib(map_key, map_name)) {
                G4cerr << "Error in GlueXComputedMagField::SetFunction - "
                       << "failed to figure out which magnetic field map "
@@ -544,19 +592,19 @@ void GlueXComputedMagField::SetFunction(std::string function)
                exit(-1);
             }
             else if (map_name.find("map_name") != map_name.end()) {
-	       if (map_name["map_name"] == "NoField")
-	          fJanaFieldMap = new DMagneticFieldMapNoField(japp);
-	       else
-	          fJanaFieldMap = new DMagneticFieldMapFineMesh(japp,
+           if (map_name["map_name"] == "NoField")
+              fJanaFieldMap = new DMagneticFieldMapNoField(japp);
+           else
+              fJanaFieldMap = new DMagneticFieldMapFineMesh(japp,
                                       run_number, map_name["map_name"]);
-	    }
+        }
             else {
                G4cerr << "Error in GlueXComputedMagField::SetFunction - "
                       << "no solenoid magnetic field map specified for "
                       << "this run in either the simulation options "
                       << "or in ccdb, cannot continue." << G4endl;
-	       exit(-1);
-	    }
+           exit(-1);
+        }
          }
       }
       else if (type_opts[1] =="NoField") {
@@ -566,6 +614,9 @@ void GlueXComputedMagField::SetFunction(std::string function)
          const GlueXDetectorConstruction *geom =
                GlueXDetectorConstruction::GetInstance();
          double field_T = (geom)? geom->GetUniformField(tesla) : 1.9;
+         if (type_opts.find(2) != type_opts.end()) {
+            field_T = std::atof(type_opts[2].c_str());
+         }
          fJanaFieldMap = new DMagneticFieldMapConst(0.0, 0.0, field_T);
       }
       else {
@@ -584,14 +635,14 @@ void GlueXComputedMagField::SetFunction(std::string function)
       std::map<int, std::string> map_opts;
       GlueXUserOptions::GetInstance()->Find("PSBFIELDTYPE", type_opts);
       GlueXUserOptions::GetInstance()->Find("PSBFIELDMAP", map_opts);
-      if (type_opts.size() == 0 || type_opts[1] == "CalibDB") {
+      if (type_opts.find(1) == type_opts.end() || type_opts[1] == "CalibDB") {
  
          // if the magnetic field is specified in control.in
          // then use that value instead of the CCDB values
  
-         if (map_opts.size() > 0) {
-            fJanaFieldMapPS = new DMagneticFieldMapPS2DMap(japp, run_number,
-                                                           map_opts[1]);
+         if (map_opts.find(1) != map_opts.end()) {
+            fJanaFieldMapPS = new DMagneticFieldMapPS2DMap_local(japp,
+                                  run_number, map_opts[1]);
          }
          else {
 
@@ -608,20 +659,24 @@ void GlueXComputedMagField::SetFunction(std::string function)
                exit(-1);
             }
             else if (map_name.find("map_name") != map_name.end()) {
-	       fJanaFieldMapPS = new DMagneticFieldMapPS2DMap(japp,
+               fJanaFieldMapPS = new DMagneticFieldMapPS2DMap_local(japp,
                                      run_number, map_name["map_name"]);
-	    }
+            }
             else {
                G4cerr << "Error in GlueXComputedMagField::SetFunction - "
                       << "no pair spectrometer magnetic field map "
                       << "specified for this run either in the options "
                       << "or in ccdb, cannot continue." << G4endl;
-	       exit(-1);
-	    }
+           exit(-1);
+        }
          }
       }
       else if (type_opts[1] == "Const") {
-         fJanaFieldMapPS = new DMagneticFieldMapPSConst(0.0, 1.64, 0.0);
+         double field_T = 1.64;
+         if (type_opts.find(2) != type_opts.end()) {
+            field_T = std::atof(type_opts[2].c_str());
+         }
+         fJanaFieldMapPS = new DMagneticFieldMapPSConst(0.0, field_T, 0.0);
       }
       else {
          G4cerr << "Error in GlueXComputedMagField::SetFunction - "
@@ -676,10 +731,28 @@ G4ThreeVector GlueXComputedMagField::GetMagField(const G4double point[4],
                      //dynamic_cast <DMagneticFieldMap* const> (fJanaFieldMap);
    DMagneticFieldMapPS *mapps = fJanaFieldMapPS;
                      //dynamic_cast <DMagneticFieldMapPS* const> (fJanaFieldMapPS);
-   if (mapso)
+   if (mapso) {
       mapso->GetField(p[0], p[1], p[2], B[0], B[1], B[2]);
-   else if (mapps)
-      mapps->GetField(p[0], p[1], p[2], B[0], B[1], B[2]);
+   }
+   else if (mapps) {
+      // Believe it or not, the DMagneticFieldMap2DMap::GetField method does
+      // yet another translation in z on p[2] before looking up in the map.
+      // Of course, this needs to be counteracted, it was never the way this
+      // lookup was supposed to work. Looking back, it appears that this was
+      // originally done to work around a bug in THIS class, which failed to
+      // initialize/copy the fXfinv data member in the constructor/assignment
+      // operator. With those bugs fixed, I dare not remove the work-around
+      // in DMagneticField2DMap for fear of breaking something else in the
+      // HALLD_RECON framework that relies on this behavior. Here I simply
+      // neutralize the work-around by adding back the z_shift that is going
+      // to be subtracted in DMagneticField2DMap::GetField lookup.
+      double z_shift(0);
+      DMagneticFieldMapPS2DMap_local* mapps_local = 
+                   dynamic_cast<DMagneticFieldMapPS2DMap_local*>(mapps);
+      if (mapps_local)
+         z_shift = mapps_local->get_z_shift();
+      mapps->GetField(p[0], p[1], p[2] + z_shift, B[0], B[1], B[2]);
+   }
    G4ThreeVector Bvec(B[0], B[1], B[2]);
    fXform.ApplyAxisTransform(Bvec);
    if (Bvec[2] == 0)

@@ -12,14 +12,10 @@
 #define GlueXSensitiveDetectorGCAL_h 1
 
 #include "G4VSensitiveDetector.hh"
-#include "G4VPhysicalVolume.hh"
-#include "G4Threading.hh"
 #include "G4AutoLock.hh"
 
 #include "GlueXHitGCALblock.hh"
 #include "GlueXHitGCALpoint.hh"
-
-#include <vector>
 
 class G4Step;
 class G4HCofThisEvent;
@@ -42,7 +38,7 @@ class GlueXSensitiveDetectorGCAL : public G4VSensitiveDetector
    GlueXHitsMapGCALblock* fBlockHitsMap;
    GlueXHitsMapGCALpoint* fPointsMap;
 
-   static std::map<G4LogicalVolume*, int> fVolumeTable;
+   std::map<G4LogicalVolume*, int> fVolumeTable;
 
    static int MAX_HITS;
    static double ATTENUATION_LENGTH;

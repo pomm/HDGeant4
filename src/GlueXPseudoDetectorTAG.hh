@@ -12,17 +12,14 @@
 #ifndef _GLUEXPSEUDODETECTORTAG_
 #define _GLUEXPSEUDODETECTORTAG_
 
-#include "G4SystemOfUnits.hh"
 #include "G4ThreeVector.hh"
 #include "G4AutoLock.hh"
 #include "G4Event.hh"
 
-#include <HDDM/hddm_s.hpp>
-
 class GlueXPseudoDetectorTAG
 {
  public:
-   GlueXPseudoDetectorTAG(int run_number);
+   GlueXPseudoDetectorTAG(int runno);
    ~GlueXPseudoDetectorTAG();
 
    void Draw() const;
@@ -30,13 +27,13 @@ class GlueXPseudoDetectorTAG
 
    int getRunNo() const;
    void setRunNo(int runno);
-   int addTaggerPhoton(G4Event *event, G4ThreeVector &vertex, 
-                       double energy, double time, int bg);
-   int addRFsync(G4Event *event, double tsync);
+   int addTaggerPhoton(const G4Event *event,
+                       double energy, double time, int bg) const;
+   int addRFsync(const G4Event *event, double tsync) const;
 
  protected:
-   GlueXPseudoDetectorTAG(GlueXPseudoDetectorTAG &src);
-   GlueXPseudoDetectorTAG& operator=(GlueXPseudoDetectorTAG &src);
+   GlueXPseudoDetectorTAG(GlueXPseudoDetectorTAG &src) = delete;
+   GlueXPseudoDetectorTAG& operator=(GlueXPseudoDetectorTAG &src) = delete;
 
    int fRunNo;
 

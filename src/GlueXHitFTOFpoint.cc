@@ -8,27 +8,43 @@
 
 G4ThreadLocal G4Allocator<GlueXHitFTOFpoint>* GlueXHitFTOFpointAllocator = 0;
 
-int GlueXHitFTOFpoint::operator==(const GlueXHitFTOFpoint &right) const
+GlueXHitFTOFpoint::GlueXHitFTOFpoint(const GlueXHitFTOFpoint &src)
 {
-   if (E_GeV          == right.E_GeV       &&
-       primary_       == right.primary_    &&
-       ptype_G3       == right.ptype_G3    &&
-       px_GeV         == right.px_GeV      &&
-       py_GeV         == right.py_GeV      &&
-       pz_GeV         == right.pz_GeV      &&
-       x_cm           == right.x_cm        &&
-       y_cm           == right.y_cm        &&
-       z_cm           == right.z_cm        &&
-       t_ns           == right.t_ns        &&
-       track_         == right.track_      &&
-       trackID_       == right.trackID_    )
-   {
-      return 1;
-   }
-   return 0;
+   E_GeV = src.E_GeV;
+   primary_ = src.primary_;
+   ptype_G3 = src.ptype_G3;
+   px_GeV = src.px_GeV;
+   py_GeV = src.py_GeV;
+   pz_GeV = src.pz_GeV;
+   x_cm = src.x_cm;
+   y_cm = src.y_cm;
+   z_cm = src.z_cm;
+   t_ns = src.t_ns;
+   track_ = src.track_;
+   trackID_ = src.trackID_;
 }
 
-GlueXHitFTOFpoint &GlueXHitFTOFpoint::operator+=(const GlueXHitFTOFpoint &right)
+int GlueXHitFTOFpoint::operator==(const GlueXHitFTOFpoint &right) const
+{
+   if (E_GeV    != right.E_GeV    ||
+       primary_ != right.primary_ ||
+       ptype_G3 != right.ptype_G3 ||
+       px_GeV   != right.px_GeV   ||
+       py_GeV   != right.py_GeV   ||
+       pz_GeV   != right.pz_GeV   ||
+       x_cm     != right.x_cm     ||
+       y_cm     != right.y_cm     ||
+       z_cm     != right.z_cm     ||
+       t_ns     != right.t_ns     ||
+       track_   != right.track_   ||
+       trackID_ != right.trackID_ )
+   {
+      return 0;
+   }
+   return 1;
+}
+
+GlueXHitFTOFpoint &GlueXHitFTOFpoint::operator+=(const GlueXHitFTOFpoint& /* right */)
 {
    G4cerr << "Error in GlueXHitFTOFpoint::operator+= - "
           << "illegal attempt to merge two TruthPoint objects in the fTOF!"

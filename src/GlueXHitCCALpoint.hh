@@ -15,12 +15,12 @@
 #include "G4VHit.hh"
 #include "G4THitsMap.hh"
 #include "G4Allocator.hh"
-#include "G4SystemOfUnits.hh"
 
 class GlueXHitCCALpoint : public G4VHit
 {
  public:
    GlueXHitCCALpoint() {}
+   GlueXHitCCALpoint(const GlueXHitCCALpoint &src);
    int operator==(const GlueXHitCCALpoint &right) const;
    GlueXHitCCALpoint &operator+=(const GlueXHitCCALpoint &right);
 

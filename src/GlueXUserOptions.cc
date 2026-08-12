@@ -67,6 +67,7 @@ GlueXUserOptions *GlueXUserOptions::GetInstance()
    // application obtain the primary instance, if any. If none has
    // yet been constructed, it returns zero.
 
+   G4AutoLock barrier(&fMutex);
    if (fInstance.size() > 0)
       return *fInstance.begin();
    else
@@ -96,9 +97,6 @@ int GlueXUserOptions::ReadControl_in(const char *ctrlin)
       if (strt == cards.npos) {
          continue;
       }
-      else if (cards[strt] == 'c' || cards[strt] == 'C') {
-         continue;
-      }
       size_t stop = cards.substr(strt).find_first_of(" ");
       if (stop == cards.npos) {
          std::string key(askey(cards.substr(strt)));
@@ -106,7 +104,10 @@ int GlueXUserOptions::ReadControl_in(const char *ctrlin)
          continue;
       }
       else {
-         std::string key(askey(cards.substr(strt, stop - strt)));
+         std::string key(askey(cards.substr(strt, stop)));
+         if (key == "c" || key == "C") {
+            continue;
+         }
          size_t args = strt + stop;
          size_t argo = cards.substr(args).find_first_not_of(" ");
          if (argo == cards.npos) {

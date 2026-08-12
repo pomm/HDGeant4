@@ -9,12 +9,10 @@
 #include "GlueXPrimaryGeneratorAction.hh"
 #include "GlueXUserEventInformation.hh"
 #include "GlueXUserTrackInformation.hh"
-#include "GlueXUserOptions.hh"
+#include "HddmOutput.hh"
 
-#include <CLHEP/Random/RandPoisson.h>
-#include <Randomize.hh>
-
-#include "G4THitsMap.hh"
+#include "G4VPhysicalVolume.hh"
+#include "G4PVPlacement.hh"
 #include "G4EventManager.hh"
 #include "G4HCofThisEvent.hh"
 #include "G4Step.hh"
@@ -22,12 +20,10 @@
 #include "G4ios.hh"
 
 #include <JANA/JApplication.h>
+#include <JANA/Calibrations/JCalibrationManager.h>
 
-#include <stdio.h>
-#include <malloc.h>
-#include <math.h>
 
-// Cutoff on the total number of allowed hits
+// Cutoff on the number of allowed hits per counter
 int GlueXSensitiveDetectorUPV::MAX_HITS = 100;
 
 // Light propagation parameters in tof bars
@@ -42,8 +38,6 @@ double GlueXSensitiveDetectorUPV::THRESH_MEV = 5.;
 
 int GlueXSensitiveDetectorUPV::instanceCount = 0;
 G4Mutex GlueXSensitiveDetectorUPV::fMutex = G4MUTEX_INITIALIZER;
-
-std::map<G4LogicalVolume*, int> GlueXSensitiveDetectorUPV::fVolumeTable;
 
 GlueXSensitiveDetectorUPV::GlueXSensitiveDetectorUPV(const G4String& name)
  : G4VSensitiveDetector(name),
@@ -60,17 +54,17 @@ GlueXSensitiveDetectorUPV::GlueXSensitiveDetectorUPV(const G4String& name)
 
    G4AutoLock barrier(&fMutex);
    if (instanceCount++ == 0) {
-      extern int run_number;
-      extern jana::JApplication *japp;
+      int runno = HddmOutput::getRunNo();
+      extern JApplication *japp;
       if (japp == 0) {
          G4cerr << "Error in GlueXSensitiveDetector constructor - "
                 << "jana global DApplication object not set, "
                 << "cannot continue." << G4endl;
          exit(-1);
       }
-      jana::JCalibration *jcalib = japp->GetJCalibration(run_number);
+      /* JCalibration *jcalib = */ japp->GetService<JCalibrationManager>()->GetJCalibration(runno);
       if (japp == 0) {   // dummy
-         jcalib = 0;
+         //jcalib = 0;
          G4cout << "UPV: ALL parameters loaded from ccdb" << G4endl;
       }
    }
@@ -81,12 +75,14 @@ GlueXSensitiveDetectorUPV::GlueXSensitiveDetectorUPV(
  : G4VSensitiveDetector(src),
    fBarHitsMap(src.fBarHitsMap), fPointsMap(src.fPointsMap)
 {
+   G4AutoLock barrier(&fMutex);
    ++instanceCount;
 }
 
 GlueXSensitiveDetectorUPV &GlueXSensitiveDetectorUPV::operator=(const
                                          GlueXSensitiveDetectorUPV &src)
 {
+   G4AutoLock barrier(&fMutex);
    *(G4VSensitiveDetector*)this = src;
    fBarHitsMap = src.fBarHitsMap;
    fPointsMap = src.fPointsMap;
@@ -95,12 +91,13 @@ GlueXSensitiveDetectorUPV &GlueXSensitiveDetectorUPV::operator=(const
 
 GlueXSensitiveDetectorUPV::~GlueXSensitiveDetectorUPV() 
 {
+   G4AutoLock barrier(&fMutex);
    --instanceCount;
 }
 
 void GlueXSensitiveDetectorUPV::Initialize(G4HCofThisEvent* hce)
 {
-   fBarHitsMap = new 
+   fBarHitsMap = new
               GlueXHitsMapUPVbar(SensitiveDetectorName, collectionName[0]);
    fPointsMap = new
               GlueXHitsMapUPVpoint(SensitiveDetectorName, collectionName[1]);
@@ -110,7 +107,7 @@ void GlueXSensitiveDetectorUPV::Initialize(G4HCofThisEvent* hce)
 }
 
 G4bool GlueXSensitiveDetectorUPV::ProcessHits(G4Step* step, 
-                                              G4TouchableHistory* unused)
+                                              G4TouchableHistory* /* ROhist */)
 {
    double dEsum = step->GetTotalEnergyDeposit();
    if (dEsum == 0)
@@ -158,22 +155,22 @@ G4bool GlueXSensitiveDetectorUPV::ProcessHits(G4Step* step,
           fabs(lastPoint->y_cm - x[1]/cm) > 2. ||
           fabs(lastPoint->z_cm - x[2]/cm) > 2.)
       {
-         GlueXHitUPVpoint* newPoint = new GlueXHitUPVpoint();
-         fPointsMap->add(key, newPoint);
          int pdgtype = track->GetDynamicParticle()->GetPDGcode();
          int g3type = GlueXPrimaryGeneratorAction::ConvertPdgToGeant3(pdgtype);
-         newPoint->ptype_G3 = g3type;
-         newPoint->track_ = trackID;
-         newPoint->trackID_ = trackinfo->GetGlueXTrackID();
-         newPoint->primary_ = (track->GetParentID() == 0);
-         newPoint->t_ns = t/ns;
-         newPoint->x_cm = x[0]/cm;
-         newPoint->y_cm = x[1]/cm;
-         newPoint->z_cm = x[2]/cm;
-         newPoint->px_GeV = pin[0]/GeV;
-         newPoint->py_GeV = pin[1]/GeV;
-         newPoint->pz_GeV = pin[2]/GeV;
-         newPoint->E_GeV = Ein/GeV;
+         GlueXHitUPVpoint newPoint;
+         newPoint.ptype_G3 = g3type;
+         newPoint.track_ = trackID;
+         newPoint.trackID_ = trackinfo->GetGlueXTrackID();
+         newPoint.primary_ = (track->GetParentID() == 0);
+         newPoint.t_ns = t/ns;
+         newPoint.x_cm = x[0]/cm;
+         newPoint.y_cm = x[1]/cm;
+         newPoint.z_cm = x[2]/cm;
+         newPoint.px_GeV = pin[0]/GeV;
+         newPoint.py_GeV = pin[1]/GeV;
+         newPoint.pz_GeV = pin[2]/GeV;
+         newPoint.E_GeV = Ein/GeV;
+         fPointsMap->add(key, newPoint);
       }
    }
 
@@ -183,8 +180,9 @@ G4bool GlueXSensitiveDetectorUPV::ProcessHits(G4Step* step,
       int key = GlueXHitUPVbar::GetKey(layer, row);
       GlueXHitUPVbar *counter = (*fBarHitsMap)[key];
       if (counter == 0) {
-         counter = new GlueXHitUPVbar(layer, row);
-         fBarHitsMap->add(key, counter);
+         GlueXHitUPVbar newcounter(layer, row);
+         fBarHitsMap->add(key, newcounter);
+         counter = (*fBarHitsMap)[key];
       }
 
       double dxleft = xlocal[0];
@@ -203,79 +201,63 @@ G4bool GlueXSensitiveDetectorUPV::ProcessHits(G4Step* step,
 
       if (dEleft > 0) {
          // add the hit on end=0 (north/left end of the bar)
+         int merge_hit = 0;
          std::vector<GlueXHitUPVbar::hitinfo_t>::iterator hiter;
          for (hiter = counter->hits.begin(); hiter != counter->hits.end(); ++hiter) {
             if (hiter->end_ == 0) {
                if (fabs(hiter->t_ns*ns - tleft) < TWO_HIT_TIME_RESOL) {
+                  merge_hit = 1;
                   break;
                }
                else if (hiter->t_ns*ns > tleft) {
-                  hiter = counter->hits.insert(hiter, GlueXHitUPVbar::hitinfo_t());
-                  hiter->end_ = 0;
-                  hiter->t_ns = 1e99;
                   break;
                }
             }
          }
-
-         if (hiter != counter->hits.end()) {             // merge with former hit
+         if (merge_hit) {
             // Use the time from the earlier hit but add the charge
             hiter->E_GeV += dEleft/GeV;
             if (hiter->t_ns*ns > tleft) {
                hiter->t_ns = tleft/ns;
             }
          }
-         else if ((int)counter->hits.size() < MAX_HITS)	{ // create new hit 
-            GlueXHitUPVbar::hitinfo_t newhit;
-            newhit.end_ = 0;
-            newhit.E_GeV = dEleft/GeV;
-            newhit.t_ns = tleft/ns;
-            counter->hits.push_back(newhit);
-         }
          else {
-            G4cerr << "GlueXSensitiveDetectorUPV::ProcessHits error: "
-                << "max hit count " << MAX_HITS
-                << " exceeded, truncating!"
-                << G4endl;
+            // create new hit 
+            hiter = counter->hits.insert(hiter, GlueXHitUPVbar::hitinfo_t());
+            hiter->end_ = 0;
+            hiter->E_GeV = dEleft/GeV;
+            hiter->t_ns = tleft/ns;
          }
       }
 
       if (dEright/MeV > 0) {
          // add the hit on end=1 (south/bottom end of the bar)
+         int merge_hit = 0;
          std::vector<GlueXHitUPVbar::hitinfo_t>::iterator hiter;
          for (hiter = counter->hits.begin(); hiter != counter->hits.end(); ++hiter) {
             if (hiter->end_ == 1) {
                if (fabs(hiter->t_ns*ns - tright) < TWO_HIT_TIME_RESOL) {
+                  merge_hit = 1;
                   break;
                }
                else if (hiter->t_ns*ns > tright) {
-                  hiter = counter->hits.insert(hiter, GlueXHitUPVbar::hitinfo_t());
-                  hiter->end_ = 1;
-                  hiter->t_ns = 1e99;
                   break;
                }
             }
          }
-
-         if (hiter != counter->hits.end()) {             // merge with former hit
+         if (merge_hit) {
             // Use the time from the earlier hit but add the charge
             hiter->E_GeV += dEright/GeV;
             if (hiter->t_ns*ns > tright) {
                hiter->t_ns = tright/ns;
             }
          }
-         else if ((int)counter->hits.size() < MAX_HITS)	{ // create new hit 
-            GlueXHitUPVbar::hitinfo_t newhit;
-            newhit.end_ = 1;
-            newhit.E_GeV = dEright/GeV;
-            newhit.t_ns = tright/ns;
-            counter->hits.push_back(newhit);
-         }
          else {
-            G4cerr << "GlueXSensitiveDetectorUPV::ProcessHits error: "
-                << "max hit count " << MAX_HITS
-                << " exceeded, truncating!"
-                << G4endl;
+            // create new hit 
+            hiter = counter->hits.insert(hiter, GlueXHitUPVbar::hitinfo_t());
+            hiter->end_ = 1;
+            hiter->E_GeV = dEright/GeV;
+            hiter->t_ns = tright/ns;
          }
       }
    }
@@ -333,7 +315,7 @@ void GlueXSensitiveDetectorUPV::EndOfEvent(G4HCofThisEvent*)
       std::vector<GlueXHitUPVbar::hitinfo_t> &hits = siter->second->hits;
       // apply a pulse height threshold cut
       for (unsigned int ih=0; ih < hits.size(); ++ih) {
-         if (hits[ih].E_GeV*1e3 < THRESH_MEV) {
+         if (hits[ih].E_GeV*1e3 <= THRESH_MEV) {
             hits.erase(hits.begin() + ih);
             --ih;
          }
@@ -359,6 +341,14 @@ void GlueXSensitiveDetectorUPV::EndOfEvent(G4HCofThisEvent*)
                thit(0).setE(hits[ih].E_GeV);
                thit(0).setT(hits[ih].t_ns);
             }
+         }
+         int hitscount = counter(0).getUpvTruthHits().size();
+         if (hitscount > 2 * MAX_HITS) {
+            counter(0).deleteUpvTruthHits(-1, 2 * MAX_HITS);
+            G4cerr << "GlueXSensitiveDetectorUPV::ENdOfEvent warning: "
+                << "max hit count " << 2 * MAX_HITS << " exceeded, "
+                << hitscount - 2 * MAX_HITS << " hits discarded."
+                << G4endl;
          }
       }
    }
@@ -399,10 +389,9 @@ int GlueXSensitiveDetectorUPV::GetIdent(std::string div,
       }
       identifiers = &Refsys::fIdentifierTable[volId];
       if ((iter = identifiers->find(div)) != identifiers->end()) {
-         if (dynamic_cast<G4PVPlacement*>(pvol))
-            return iter->second[pvol->GetCopyNo() - 1];
-         else
-            return iter->second[pvol->GetCopyNo()];
+         int copyNum = touch->GetCopyNumber(depth);
+         copyNum += (dynamic_cast<G4PVPlacement*>(pvol))? -1 : 0;
+         return iter->second[copyNum];
       }
    }
    return -1;

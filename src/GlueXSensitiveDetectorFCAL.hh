@@ -12,14 +12,10 @@
 #define GlueXSensitiveDetectorFCAL_h 1
 
 #include "G4VSensitiveDetector.hh"
-#include "G4VPhysicalVolume.hh"
-#include "G4Threading.hh"
 #include "G4AutoLock.hh"
 
 #include "GlueXHitFCALblock.hh"
 #include "GlueXHitFCALpoint.hh"
-
-#include <vector>
 
 class G4Step;
 class G4HCofThisEvent;
@@ -33,7 +29,7 @@ class GlueXSensitiveDetectorFCAL : public G4VSensitiveDetector
    virtual ~GlueXSensitiveDetectorFCAL();
   
    virtual void Initialize(G4HCofThisEvent* hitCollection);
-   virtual G4bool ProcessHits(G4Step* step, G4TouchableHistory* unused);
+   virtual G4bool ProcessHits(G4Step* step, G4TouchableHistory* ROhist);
    virtual void EndOfEvent(G4HCofThisEvent* hitCollection);
 
    int GetIdent(std::string div, const G4VTouchable *touch);
@@ -42,7 +38,7 @@ class GlueXSensitiveDetectorFCAL : public G4VSensitiveDetector
    GlueXHitsMapFCALblock* fBlocksMap;
    GlueXHitsMapFCALpoint* fPointsMap;
 
-   static std::map<G4LogicalVolume*, int> fVolumeTable;
+   std::map<G4LogicalVolume*, int> fVolumeTable;
 
    static int MAX_HITS;
    static int CENTRAL_COLUMN;
@@ -54,6 +50,8 @@ class GlueXSensitiveDetectorFCAL : public G4VSensitiveDetector
    static double C_EFFECTIVE;
    static double TWO_HIT_TIME_RESOL;
    static double THRESH_MEV;
+   static double SHOWER_ENERGY_SCALE_FACTOR;
+   static double MIP_ENERGY_SCALE_FACTOR;
 
    static int instanceCount;
    static G4Mutex fMutex;

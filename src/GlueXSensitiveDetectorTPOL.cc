@@ -9,12 +9,10 @@
 #include "GlueXPrimaryGeneratorAction.hh"
 #include "GlueXUserEventInformation.hh"
 #include "GlueXUserTrackInformation.hh"
-#include "GlueXUserOptions.hh"
+#include "HddmOutput.hh"
 
-#include <CLHEP/Random/RandPoisson.h>
-#include <Randomize.hh>
-
-#include "G4THitsMap.hh"
+#include "G4VPhysicalVolume.hh"
+#include "G4PVPlacement.hh"
 #include "G4EventManager.hh"
 #include "G4HCofThisEvent.hh"
 #include "G4Step.hh"
@@ -22,14 +20,12 @@
 #include "G4ios.hh"
 
 #include <JANA/JApplication.h>
+#include <JANA/Calibrations/JCalibrationManager.h>
 
-#include <stdio.h>
-#include <malloc.h>
-#include <math.h>
 
 #define sqr(x) ((x)*(x))
 
-// Cutoff on the total number of allowed hits
+// Cutoff on the number of allowed hits per sector
 int GlueXSensitiveDetectorTPOL::MAX_HITS = 100;
 
 // Minimum hit time difference for two hits on the same wedge
@@ -40,8 +36,6 @@ double GlueXSensitiveDetectorTPOL::THRESH_MEV = 0.050;
 
 int GlueXSensitiveDetectorTPOL::instanceCount = 0;
 G4Mutex GlueXSensitiveDetectorTPOL::fMutex = G4MUTEX_INITIALIZER;
-
-std::map<G4LogicalVolume*, int> GlueXSensitiveDetectorTPOL::fVolumeTable;
 
 GlueXSensitiveDetectorTPOL::GlueXSensitiveDetectorTPOL(const G4String& name)
  : G4VSensitiveDetector(name),
@@ -58,17 +52,17 @@ GlueXSensitiveDetectorTPOL::GlueXSensitiveDetectorTPOL(const G4String& name)
 
    G4AutoLock barrier(&fMutex);
    if (instanceCount++ == 0) {
-      extern int run_number;
-      extern jana::JApplication *japp;
+      int runno = HddmOutput::getRunNo();
+      extern JApplication *japp;
       if (japp == 0) {
          G4cerr << "Error in GlueXSensitiveDetector constructor - "
                 << "jana global DApplication object not set, "
                 << "cannot continue." << G4endl;
          exit(-1);
       }
-      jana::JCalibration *jcalib = japp->GetJCalibration(run_number);
+      /* JCalibration *jcalib = */ japp->GetService<JCalibrationManager>()->GetJCalibration(runno);
       if (japp == 0) {   // dummy
-         jcalib = 0;
+         //jcalib = 0;
          G4cout << "TPOL: ALL parameters loaded from ccdb" << G4endl;
       }
    }
@@ -79,12 +73,14 @@ GlueXSensitiveDetectorTPOL::GlueXSensitiveDetectorTPOL(
  : G4VSensitiveDetector(src),
    fHitsMap(src.fHitsMap), fPointsMap(src.fPointsMap)
 {
+   G4AutoLock barrier(&fMutex);
    ++instanceCount;
 }
 
 GlueXSensitiveDetectorTPOL &GlueXSensitiveDetectorTPOL::operator=(const
                                          GlueXSensitiveDetectorTPOL &src)
 {
+   G4AutoLock barrier(&fMutex);
    *(G4VSensitiveDetector*)this = src;
    fHitsMap = src.fHitsMap;
    fPointsMap = src.fPointsMap;
@@ -93,12 +89,13 @@ GlueXSensitiveDetectorTPOL &GlueXSensitiveDetectorTPOL::operator=(const
 
 GlueXSensitiveDetectorTPOL::~GlueXSensitiveDetectorTPOL() 
 {
+   G4AutoLock barrier(&fMutex);
    --instanceCount;
 }
 
 void GlueXSensitiveDetectorTPOL::Initialize(G4HCofThisEvent* hce)
 {
-   fHitsMap = new 
+   fHitsMap = new
               GlueXHitsMapTPOLwedge(SensitiveDetectorName, collectionName[0]);
    fPointsMap = new
               GlueXHitsMapTPOLpoint(SensitiveDetectorName, collectionName[1]);
@@ -108,7 +105,7 @@ void GlueXSensitiveDetectorTPOL::Initialize(G4HCofThisEvent* hce)
 }
 
 G4bool GlueXSensitiveDetectorTPOL::ProcessHits(G4Step* step, 
-                                               G4TouchableHistory* unused)
+                                               G4TouchableHistory* /* ROhist */)
 {
    double dEsum = step->GetTotalEnergyDeposit();
    if (dEsum == 0)
@@ -144,37 +141,37 @@ G4bool GlueXSensitiveDetectorTPOL::ProcessHits(G4Step* step,
    // Post the hit to the points list in the
    // order of appearance in the event simulation.
 
-   int ring = 0; // GetIdent("ring", touch); - all rings are currently ORed
+   int ring = 0; // GetIdent("ring", touch);
    int sector = GetIdent("sector", touch);
    G4Track *track = step->GetTrack();
    G4int trackID = track->GetTrackID();
-      GlueXUserTrackInformation *trackinfo = (GlueXUserTrackInformation*)
-                                             track->GetUserInformation();
-   if (trackinfo->GetGlueXHistory() == 0) {
+   int pdgtype = track->GetDynamicParticle()->GetPDGcode();
+   int g3type = GlueXPrimaryGeneratorAction::ConvertPdgToGeant3(pdgtype);
+   GlueXUserTrackInformation *trackinfo = (GlueXUserTrackInformation*)
+                                          track->GetUserInformation();
+   int itrack = trackinfo->GetGlueXTrackID();
+   if (trackinfo->GetGlueXHistory() == 0 && itrack > 0) {
       G4int key = fPointsMap->entries();
       GlueXHitTPOLpoint* lastPoint = (*fPointsMap)[key - 1];
       if (lastPoint == 0 || lastPoint->track_ != trackID ||
           fabs(lastPoint->t_ns - t/ns) > 0.1 ||
-          (fabs(lastPoint->x_cm - x[0]/cm) > 0.1 &&
-           fabs(lastPoint->y_cm - x[1]/cm) > 0.1) )
+          (fabs(lastPoint->r_cm - x.perp()/cm) > 0.1 &&
+           fabs(lastPoint->phi_rad - x.phi()) > 0.1) )
       {
-         GlueXHitTPOLpoint* newPoint = new GlueXHitTPOLpoint();
+         GlueXHitTPOLpoint newPoint;
+         newPoint.ptype_G3 = g3type;
+         newPoint.track_ = trackID;
+         newPoint.trackID_ = itrack;
+         newPoint.primary_ = (track->GetParentID() == 0);
+         newPoint.phi_rad = x.phi();
+         newPoint.r_cm = x.perp()/cm;
+         newPoint.t_ns = t/ns;
+         newPoint.px_GeV = pin[0]/GeV;
+         newPoint.py_GeV = pin[1]/GeV;
+         newPoint.pz_GeV = pin[2]/GeV;
+         newPoint.E_GeV = Ein/GeV;
+         newPoint.dEdx_GeV_cm = dEdx/(GeV/cm);
          fPointsMap->add(key, newPoint);
-         int pdgtype = track->GetDynamicParticle()->GetPDGcode();
-         int g3type = GlueXPrimaryGeneratorAction::ConvertPdgToGeant3(pdgtype);
-         newPoint->ptype_G3 = g3type;
-         newPoint->track_ = trackID;
-         newPoint->trackID_ = trackinfo->GetGlueXTrackID();
-         newPoint->primary_ = (track->GetParentID() == 0);
-         newPoint->t_ns = t/ns;
-         newPoint->x_cm = x[0]/cm;
-         newPoint->y_cm = x[1]/cm;
-         newPoint->z_cm = x[2]/cm;
-         newPoint->px_GeV = pin[0]/GeV;
-         newPoint->py_GeV = pin[1]/GeV;
-         newPoint->pz_GeV = pin[2]/GeV;
-         newPoint->E_GeV = Ein/GeV;
-         newPoint->dEdx_GeV_cm = dEdx/(GeV/cm);
       }
    }
 
@@ -184,55 +181,44 @@ G4bool GlueXSensitiveDetectorTPOL::ProcessHits(G4Step* step,
       int key = GlueXHitTPOLwedge::GetKey(sector, ring);
       GlueXHitTPOLwedge *wedge = (*fHitsMap)[key];
       if (wedge == 0) {
-         wedge = new GlueXHitTPOLwedge(sector, ring);
-         fHitsMap->add(key, wedge);
+         GlueXHitTPOLwedge newwedge(sector, ring);
+         fHitsMap->add(key, newwedge);
+         wedge = (*fHitsMap)[key];
       }
 
       // Add the hit to the hits vector, maintaining strict time ordering
 
+      int merge_hit = 0;
       std::vector<GlueXHitTPOLwedge::hitinfo_t>::iterator hiter;
       for (hiter = wedge->hits.begin(); hiter != wedge->hits.end(); ++hiter) {
          if (fabs(hiter->t_ns*ns - t) < TWO_HIT_TIME_RESOL) {
+            merge_hit = 1;
             break;
          }
          else if (hiter->t_ns*ns > t) {
-            hiter = wedge->hits.insert(hiter, GlueXHitTPOLwedge::hitinfo_t());
-            hiter->t_ns = 1e99;
             break;
          }
       }
-
-      GlueXUserTrackInformation *trackinfo = (GlueXUserTrackInformation*)
-                                             track->GetUserInformation();
-      if (hiter != wedge->hits.end()) {             // merge with former hit
+      if (merge_hit) {
          // Use the time from the earlier hit but add the charge
          hiter->dE_MeV += dEsum/MeV;
          if (hiter->t_ns*ns > t) {
             hiter->t_ns = t/ns;
-            int pdgtype = track->GetDynamicParticle()->GetPDGcode();
-            int g3type = GlueXPrimaryGeneratorAction::ConvertPdgToGeant3(pdgtype);
-            hiter->itrack_ = trackinfo->GetGlueXTrackID();
+            hiter->itrack_ = itrack;
             hiter->ptype_G3 = g3type;
             hiter->t0_ns = t/ns;
             hiter->r_cm = x.perp()/cm;
          }
       }
-      else if ((int)wedge->hits.size() < MAX_HITS)	{   // create new hit 
-         GlueXHitTPOLwedge::hitinfo_t newhit;
-         newhit.dE_MeV = dEsum/MeV;
-         newhit.t_ns = t/ns;
-         int pdgtype = track->GetDynamicParticle()->GetPDGcode();
-         int g3type = GlueXPrimaryGeneratorAction::ConvertPdgToGeant3(pdgtype);
-         newhit.itrack_ = trackinfo->GetGlueXTrackID();
-         newhit.ptype_G3 = g3type;
-         newhit.t0_ns = t/ns;
-         newhit.r_cm = x.perp()/cm;
-         wedge->hits.push_back(newhit);
-      }
       else {
-         G4cerr << "GlueXSensitiveDetectorTPOL::ProcessHits error: "
-             << "max hit count " << MAX_HITS << " exceeded, truncating!"
-             << G4endl;
+         // create new hit 
+         hiter = wedge->hits.insert(hiter, GlueXHitTPOLwedge::hitinfo_t());
+         hiter->dE_MeV = dEsum/MeV;
+         hiter->t_ns = t/ns;
+         hiter->itrack_ = itrack;
+         hiter->ptype_G3 = g3type;
+         hiter->t0_ns = t/ns;
+         hiter->r_cm = x.perp()/cm;
       }
    }
    return true;
@@ -284,12 +270,12 @@ void GlueXSensitiveDetectorTPOL::EndOfEvent(G4HCofThisEvent*)
       hitview.addTripletPolarimeters();
    hddm_s::TripletPolarimeter &polarimeter = hitview.getTripletPolarimeter();
 
-   // Collect and output the stcTruthHits
+   // Collect and output the tpolTruthHits
    for (siter = wedges->begin(); siter != wedges->end(); ++siter) {
       std::vector<GlueXHitTPOLwedge::hitinfo_t> &hits = siter->second->hits;
       // apply a pulse height threshold cut
       for (unsigned int ih=0; ih < hits.size(); ++ih) {
-         if (hits[ih].dE_MeV < THRESH_MEV) {
+         if (hits[ih].dE_MeV <= THRESH_MEV) {
             hits.erase(hits.begin() + ih);
             --ih;
          }
@@ -298,7 +284,15 @@ void GlueXSensitiveDetectorTPOL::EndOfEvent(G4HCofThisEvent*)
          hddm_s::TpolSectorList wedge = polarimeter.addTpolSectors(1);
          wedge(0).setSector(siter->second->sector_);
          wedge(0).setRing(siter->second->ring_);
-         for (int ih=0; ih < (int)hits.size(); ++ih) {
+         int hitscount = hits.size();
+         if (hitscount > MAX_HITS) {
+            hitscount = MAX_HITS;
+            G4cerr << "GlueXSensitiveDetectorTPOL::EndOfEvent warning: "
+                   << "counter max hit count " << MAX_HITS << " exceeded, "
+                   << hits.size() - hitscount << " hits discarded."
+                   << G4endl;
+         }
+         for (int ih=0; ih < hitscount; ++ih) {
             hddm_s::TpolTruthHitList thit = wedge(0).addTpolTruthHits(1);
             thit(0).setDE(hits[ih].dE_MeV*MeV/GeV);
             thit(0).setT(hits[ih].t_ns);
@@ -308,7 +302,7 @@ void GlueXSensitiveDetectorTPOL::EndOfEvent(G4HCofThisEvent*)
       }
    }
 
-   // Collect and output the wedgeTruthPoints
+   // Collect and output the tpolTruthPoints
    for (piter = points->begin(); piter != points->end(); ++piter) {
       hddm_s::TpolTruthPointList point = polarimeter.addTpolTruthPoints(1);
       point(0).setE(piter->second->E_GeV);
@@ -318,9 +312,8 @@ void GlueXSensitiveDetectorTPOL::EndOfEvent(G4HCofThisEvent*)
       point(0).setPx(piter->second->px_GeV);
       point(0).setPy(piter->second->py_GeV);
       point(0).setPz(piter->second->pz_GeV);
-      point(0).setX(piter->second->x_cm);
-      point(0).setY(piter->second->y_cm);
-      point(0).setZ(piter->second->z_cm);
+      point(0).setPhi(piter->second->phi_rad);
+      point(0).setR(piter->second->r_cm);
       point(0).setT(piter->second->t_ns);
       point(0).setTrack(piter->second->track_);
       hddm_s::TrackIDList tid = point(0).addTrackIDs();
@@ -345,10 +338,9 @@ int GlueXSensitiveDetectorTPOL::GetIdent(std::string div,
       }
       identifiers = &Refsys::fIdentifierTable[volId];
       if ((iter = identifiers->find(div)) != identifiers->end()) {
-         if (dynamic_cast<G4PVPlacement*>(pvol))
-            return iter->second[pvol->GetCopyNo() - 1];
-         else
-            return iter->second[pvol->GetCopyNo()];
+         int copyNum = touch->GetCopyNumber(depth);
+         copyNum += (dynamic_cast<G4PVPlacement*>(pvol))? -1 : 0;
+         return iter->second[copyNum];
       }
    }
    return -1;

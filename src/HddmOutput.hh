@@ -12,7 +12,8 @@
 #ifndef _HDDMOUTPUT_
 #define _HDDMOUTPUT_
 
-#include "GlueXPseudoDetectorTAG.hh"
+#include "G4AutoLock.hh"
+#include "G4ios.hh"
 
 #include <HDDM/hddm_s.hpp>
 #include <fstream>
@@ -29,13 +30,10 @@ class HddmOutput
    static int incrementEventNo();
    static void setRunNo(int runno);
    static void setEventNo(int eventno);
-   static GlueXPseudoDetectorTAG &getTagger();
 
  protected:
-   HddmOutput(HddmOutput &src);
-   HddmOutput& operator=(HddmOutput &src);
-
-   static GlueXPseudoDetectorTAG fTagger;
+   HddmOutput(HddmOutput &src) = delete;
+   HddmOutput& operator=(HddmOutput &src) = delete;
 
    static int fRunNo;
    static int fEventNo;
@@ -59,12 +57,8 @@ inline int HddmOutput::getEventNo()
 
 inline void HddmOutput::setEventNo(int eventno)
 {
+   G4AutoLock barrier(&fMutex);
    fEventNo = eventno;
-}
-
-inline GlueXPseudoDetectorTAG &HddmOutput::getTagger()
-{
-   return fTagger;
 }
 
 #endif

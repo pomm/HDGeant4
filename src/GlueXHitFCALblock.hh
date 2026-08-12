@@ -15,12 +15,13 @@
 #include "G4VHit.hh"
 #include "G4THitsMap.hh"
 #include "G4Allocator.hh"
-#include "G4SystemOfUnits.hh"
 
 class GlueXHitFCALblock : public G4VHit
 {
  public:
+   GlueXHitFCALblock() {}
    GlueXHitFCALblock(G4int column, G4int row);
+   GlueXHitFCALblock(const GlueXHitFCALblock &src);
    int operator==(const GlueXHitFCALblock &right) const;
    GlueXHitFCALblock &operator+=(const GlueXHitFCALblock &right);
 
@@ -38,6 +39,8 @@ class GlueXHitFCALblock : public G4VHit
    struct hitinfo_t {
       G4double E_GeV;      // energy deposition (GeV)
       G4double t_ns;       // pulse leading-edge time (ns)
+      G4double dE_lightguide_GeV;  // light guide energy deposition (GeV)
+      G4double t_lightguide_ns;    // light guide pulse leading-edge time (ns)
    };
    std::vector<hitinfo_t> hits;
 

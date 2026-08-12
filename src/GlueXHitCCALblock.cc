@@ -14,6 +14,13 @@ GlueXHitCCALblock::GlueXHitCCALblock(G4int column, G4int row)
    row_(row)
 {}
 
+GlueXHitCCALblock::GlueXHitCCALblock(const GlueXHitCCALblock &src)
+{
+   column_ = src.column_;
+   row_ = src.row_;
+   hits = src.hits;
+}
+
 int GlueXHitCCALblock::operator==(const GlueXHitCCALblock &right) const
 {
    if (column_ !=  right.column_ || row_ != right.row_) {
@@ -24,8 +31,8 @@ int GlueXHitCCALblock::operator==(const GlueXHitCCALblock &right) const
    }
 
    for (int ih=0; ih < (int)hits.size(); ++ih) {
-      if (hits[ih].E_GeV == right.hits[ih].E_GeV &&
-          hits[ih].t_ns == right.hits[ih].t_ns)
+      if (hits[ih].E_GeV != right.hits[ih].E_GeV ||
+          hits[ih].t_ns != right.hits[ih].t_ns)
       {
          return 0;
       }
@@ -48,9 +55,7 @@ GlueXHitCCALblock &GlueXHitCCALblock::operator+=(const GlueXHitCCALblock &right)
          if (hiter->t_ns > hitsrc->t_ns)
             break;
       }
-      hiter = hits.insert(hiter, GlueXHitCCALblock::hitinfo_t());
-      hiter->E_GeV = hitsrc->E_GeV;
-      hiter->t_ns = hitsrc->t_ns;
+      hiter = hits.insert(hiter, *hitsrc);
    }
    return *this;
 }

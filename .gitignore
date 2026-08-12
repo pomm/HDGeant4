@@ -7,3 +7,10 @@
 *.pyc
 *.o
 *.so
+build/*
+src/G4fixes
+src/G4debug
+.clone_done
+.link_to_fixes_done
+.make_done
+hdgeant4_prereqs_version.xml

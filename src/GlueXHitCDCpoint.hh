@@ -15,12 +15,12 @@
 #include "G4VHit.hh"
 #include "G4THitsMap.hh"
 #include "G4Allocator.hh"
-#include "G4SystemOfUnits.hh"
 
 class GlueXHitCDCpoint : public G4VHit
 {
  public:
    GlueXHitCDCpoint() {}
+   GlueXHitCDCpoint(const GlueXHitCDCpoint &src);
    int operator==(const GlueXHitCDCpoint &right) const;
    GlueXHitCDCpoint &operator+=(const GlueXHitCDCpoint &right);
 
@@ -45,6 +45,8 @@ class GlueXHitCDCpoint : public G4VHit
    G4double t_ns;        // time of track crossing at point (ns)
    G4int track_;         // Geant4 track ID of particle making this track
    G4int trackID_;       // GlueX-assigned track ID of particle making this track
+   G4int sector_;        // CDC straw number within ring where point lies
+   G4int ring_;          // CDC ring number where point lies
 
    G4int GetKey() const { return (track_ << 20) + int(t_ns * 100); }
 };

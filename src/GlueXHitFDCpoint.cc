@@ -13,29 +13,48 @@ GlueXHitFDCpoint::GlueXHitFDCpoint(G4int chamber)
    chamber_(chamber)
 {}
 
-int GlueXHitFDCpoint::operator==(const GlueXHitFDCpoint &right) const
+GlueXHitFDCpoint::GlueXHitFDCpoint(const GlueXHitFDCpoint &src)
 {
-   if (E_GeV          == right.E_GeV       &&
-       dEdx_GeV_cm    == right.dEdx_GeV_cm &&
-       dradius_cm     == right.dradius_cm  &&
-       primary_       == right.primary_    &&
-       ptype_G3       == right.ptype_G3    &&
-       px_GeV         == right.px_GeV      &&
-       py_GeV         == right.py_GeV      &&
-       pz_GeV         == right.pz_GeV      &&
-       x_cm           == right.x_cm        &&
-       y_cm           == right.y_cm        &&
-       z_cm           == right.z_cm        &&
-       t_ns           == right.t_ns        &&
-       track_         == right.track_      &&
-       trackID_       == right.trackID_    )
-   {
-      return 1;
-   }
-   return 0;
+   chamber_ = src.chamber_;
+   E_GeV = src.E_GeV;
+   dEdx_GeV_cm = src.dEdx_GeV_cm;
+   dradius_cm = src.dradius_cm;
+   primary_ = src.primary_;
+   ptype_G3 = src.ptype_G3;
+   px_GeV = src.px_GeV;
+   py_GeV = src.py_GeV;
+   pz_GeV = src.pz_GeV;
+   x_cm = src.x_cm;
+   y_cm = src.y_cm;
+   z_cm = src.z_cm;
+   t_ns = src.t_ns;
+   track_ = src.track_;
+   trackID_ = src.trackID_;
 }
 
-GlueXHitFDCpoint &GlueXHitFDCpoint::operator+=(const GlueXHitFDCpoint &right)
+int GlueXHitFDCpoint::operator==(const GlueXHitFDCpoint &right) const
+{
+   if (E_GeV          != right.E_GeV       ||
+       dEdx_GeV_cm    != right.dEdx_GeV_cm ||
+       dradius_cm     != right.dradius_cm  ||
+       primary_       != right.primary_    ||
+       ptype_G3       != right.ptype_G3    ||
+       px_GeV         != right.px_GeV      ||
+       py_GeV         != right.py_GeV      ||
+       pz_GeV         != right.pz_GeV      ||
+       x_cm           != right.x_cm        ||
+       y_cm           != right.y_cm        ||
+       z_cm           != right.z_cm        ||
+       t_ns           != right.t_ns        ||
+       track_         != right.track_      ||
+       trackID_       != right.trackID_    )
+   {
+      return 0;
+   }
+   return 1;
+}
+
+GlueXHitFDCpoint &GlueXHitFDCpoint::operator+=(const GlueXHitFDCpoint& /* right */)
 {
    G4cerr << "Error in GlueXHitFDCpoint::operator+= - "
           << "illegal attempt to merge two TruthPoint objects in the fdc!"

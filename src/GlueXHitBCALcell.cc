@@ -15,6 +15,14 @@ GlueXHitBCALcell::GlueXHitBCALcell(G4int module, G4int layer, G4int sector)
    sector_(sector)
 {}
 
+GlueXHitBCALcell::GlueXHitBCALcell(const GlueXHitBCALcell &src)
+{
+   module_ = src.module_;
+   layer_ = src.layer_;
+   sector_ = src.sector_;
+   hits = src.hits;
+}
+
 int GlueXHitBCALcell::operator==(const GlueXHitBCALcell &right) const
 {
    if (module_ !=  right.module_ || layer_ != right.layer_ || 
@@ -27,10 +35,14 @@ int GlueXHitBCALcell::operator==(const GlueXHitBCALcell &right) const
    }
 
    for (int ih=0; ih < (int)hits.size(); ++ih) {
-      if (hits[ih].E_GeV     == right.hits[ih].E_GeV     &&
-          hits[ih].zlocal_cm == right.hits[ih].zlocal_cm &&
-          hits[ih].t_ns      == right.hits[ih].t_ns      &&
-          hits[ih].itrack_   == right.hits[ih].itrack_ )
+      if (hits[ih].E_GeV       != right.hits[ih].E_GeV     ||
+          hits[ih].zlocal_cm   != right.hits[ih].zlocal_cm ||
+          hits[ih].t_ns        != right.hits[ih].t_ns      ||
+          hits[ih].Eup_GeV     != right.hits[ih].Eup_GeV   ||
+          hits[ih].Edown_GeV   != right.hits[ih].Edown_GeV ||
+          hits[ih].tup_ns      != right.hits[ih].tup_ns    ||
+          hits[ih].tdown_ns    != right.hits[ih].tdown_ns  ||
+          hits[ih].incidentId_ != right.hits[ih].incidentId_ )
       {
          return 0;
       }
@@ -55,11 +67,7 @@ GlueXHitBCALcell &GlueXHitBCALcell::operator+=(const GlueXHitBCALcell &right)
          if (hiter->t_ns > hitsrc->t_ns)
             break;
       }
-      hiter = hits.insert(hiter, GlueXHitBCALcell::hitinfo_t());
-      hiter->E_GeV = hitsrc->E_GeV;
-      hiter->zlocal_cm = hitsrc->zlocal_cm;
-      hiter->t_ns = hitsrc->t_ns;
-      hiter->itrack_ = hitsrc->itrack_;
+      hiter = hits.insert(hiter, *hitsrc);
    }
    return *this;
 }
@@ -78,9 +86,13 @@ void GlueXHitBCALcell::Print() const
    std::vector<hitinfo_t>::const_iterator hiter;
    for (hiter = hits.begin(); hiter != hits.end(); ++hiter) {
       G4cout << "   E = " << hiter->E_GeV << " GeV" << G4endl
-             << "   zlocal = " << hiter->t_ns << " cm" << G4endl
              << "   t = " << hiter->t_ns << " ns" << G4endl
-             << "   itrack = " << hiter->itrack_ << G4endl
+             << "   zlocal = " << hiter->t_ns << " cm" << G4endl
+             << "   incidentId = " << hiter->incidentId_ << G4endl
+             << "   E(upstream end) = " << hiter->Eup_GeV << " GeV" << G4endl
+             << "   E(downstream end) = " << hiter->Edown_GeV << " GeV" << G4endl
+             << "   t(upstream end) = " << hiter->tup_ns << " ns" << G4endl
+             << "   t(downstream end) = " << hiter->tdown_ns << " ns" << G4endl
              << G4endl;
    }
 }

@@ -15,12 +15,13 @@
 #include "G4VHit.hh"
 #include "G4THitsMap.hh"
 #include "G4Allocator.hh"
-#include "G4SystemOfUnits.hh"
 
 class GlueXHitTPOLwedge : public G4VHit
 {
  public:
+   GlueXHitTPOLwedge() {}
    GlueXHitTPOLwedge(G4int sector, G4int ring=0);
+   GlueXHitTPOLwedge(const GlueXHitTPOLwedge &src);
    int operator==(const GlueXHitTPOLwedge &right) const;
    GlueXHitTPOLwedge &operator+=(const GlueXHitTPOLwedge &right);
 

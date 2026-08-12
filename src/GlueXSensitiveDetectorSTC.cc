@@ -9,12 +9,10 @@
 #include "GlueXPrimaryGeneratorAction.hh"
 #include "GlueXUserEventInformation.hh"
 #include "GlueXUserTrackInformation.hh"
-#include "GlueXUserOptions.hh"
+#include "HddmOutput.hh"
 
-#include <CLHEP/Random/RandPoisson.h>
-#include <Randomize.hh>
-
-#include "G4THitsMap.hh"
+#include "G4VPhysicalVolume.hh"
+#include "G4PVPlacement.hh"
 #include "G4EventManager.hh"
 #include "G4HCofThisEvent.hh"
 #include "G4Step.hh"
@@ -22,18 +20,16 @@
 #include "G4ios.hh"
 
 #include <JANA/JApplication.h>
+#include <JANA/Calibrations/JCalibrationManager.h>
 
-#include <stdio.h>
-#include <malloc.h>
-#include <math.h>
 
-// Cutoff on the total number of allowed hits
+// Cutoff on the number of allowed hits per counter
 int GlueXSensitiveDetectorSTC::MAX_HITS = 100;
 
 // Light propagation parameters in start counter
 double GlueXSensitiveDetectorSTC::ATTENUATION_LENGTH = 150.*cm;
 double GlueXSensitiveDetectorSTC::C_EFFECTIVE = 15*cm/ns;
-double GlueXSensitiveDetectorSTC::LIGHT_GUIDE = 0.; // ??
+double GlueXSensitiveDetectorSTC::LIGHT_GUIDE = 0.*cm;
 double GlueXSensitiveDetectorSTC::ANGLE_COR = 1.054;
 
 // Geometric parameters of STC scintillators
@@ -65,8 +61,6 @@ double GlueXSensitiveDetectorSTC::THRESH_MEV = 0.150;
 int GlueXSensitiveDetectorSTC::instanceCount = 0;
 G4Mutex GlueXSensitiveDetectorSTC::fMutex = G4MUTEX_INITIALIZER;
 
-std::map<G4LogicalVolume*, int> GlueXSensitiveDetectorSTC::fVolumeTable;
-
 GlueXSensitiveDetectorSTC::GlueXSensitiveDetectorSTC(const G4String& name)
  : G4VSensitiveDetector(name),
    fHitsMap(0), fPointsMap(0)
@@ -82,15 +76,15 @@ GlueXSensitiveDetectorSTC::GlueXSensitiveDetectorSTC(const G4String& name)
 
    G4AutoLock barrier(&fMutex);
    if (instanceCount++ == 0) {
-      extern int run_number;
-      extern jana::JApplication *japp;
+      int runno = HddmOutput::getRunNo();
+      extern JApplication *japp;
       if (japp == 0) {
          G4cerr << "Error in GlueXSensitiveDetector constructor - "
                 << "jana global DApplication object not set, "
                 << "cannot continue." << G4endl;
          exit(-1);
       }
-      jana::JCalibration *jcalib = japp->GetJCalibration(run_number);
+      JCalibration *jcalib = japp->GetService<JCalibrationManager>()->GetJCalibration(runno);
       std::map<string, float> stc_parms;
       jcalib->Get("START_COUNTER/start_parms", stc_parms);
       ATTENUATION_LENGTH = stc_parms.at("START_ATTEN_LENGTH")*cm;
@@ -98,9 +92,9 @@ GlueXSensitiveDetectorSTC::GlueXSensitiveDetectorSTC(const G4String& name)
       TWO_HIT_TIME_RESOL = stc_parms.at("START_TWO_HIT_RESOL")*ns;
       MAX_HITS = stc_parms.at("START_MAX_HITS");
       THRESH_MEV = stc_parms.at("START_THRESH_MEV");
-      LIGHT_GUIDE = stc_parms.at("START_LIGHT_GUIDE");
+      LIGHT_GUIDE = stc_parms.at("START_LIGHT_GUIDE")*cm;
       ANGLE_COR = stc_parms.at("START_ANGLE_COR");
-      BENT_REGION = stc_parms.at("START_BENT_REGION");
+      BENT_REGION = stc_parms.at("START_BENT_REGION")*cm;
 
       std::vector< std::map<std::string, float> > values;
       jcalib->Get("START_COUNTER/attenuation_factor", values);
@@ -115,19 +109,21 @@ GlueXSensitiveDetectorSTC::GlueXSensitiveDetectorSTC(const G4String& name)
          STRAIGHT_ATTENUATION_B[k] /= cm;
          BENDNOSE_ATTENUATION_B[k] /= cm;
       }
-      jcalib->Get("START_COUNTER/propagation_speed", values);
+      jcalib->Get("START_COUNTER/propagation_time_corr", values);
       for (unsigned int k=0; k < values.size(); ++k) {
-         STRAIGHT_PROPAGATION_A[k] = values[k].at("SC_STRAIGHT_PROPAGATION_A");
-         STRAIGHT_PROPAGATION_B[k] = values[k].at("SC_STRAIGHT_PROPAGATION_B");
-         BEND_PROPAGATION_A[k] = values[k].at("SC_BEND_PROPAGATION_A");
-         BEND_PROPAGATION_B[k] = values[k].at("SC_BEND_PROPAGATION_B");
-         NOSE_PROPAGATION_A[k] = values[k].at("SC_NOSE_PROPAGATION_A");
-         NOSE_PROPAGATION_B[k] = values[k].at("SC_NOSE_PROPAGATION_B");
+         STRAIGHT_PROPAGATION_A[k] = values[k].at("a");
+         STRAIGHT_PROPAGATION_B[k] = values[k].at("b");
+         BEND_PROPAGATION_A[k] = values[k].at("c");
+         BEND_PROPAGATION_B[k] = values[k].at("d");
+         NOSE_PROPAGATION_A[k] = values[k].at("e");
+         NOSE_PROPAGATION_B[k] = values[k].at("f");
          // A factors are in units of ns, B factors are ns/cm
          STRAIGHT_PROPAGATION_A[k] *= ns;
          STRAIGHT_PROPAGATION_B[k] *= ns/cm;
-         BEND_PROPAGATION_A[k] *= ns/cm;
+         BEND_PROPAGATION_A[k] *= ns;
          BEND_PROPAGATION_B[k] *= ns/cm;
+         NOSE_PROPAGATION_A[k] *= ns;
+         NOSE_PROPAGATION_B[k] *= ns/cm;
       }
 
       G4cout << "STC: ALL parameters loaded from ccdb" << G4endl;
@@ -139,12 +135,14 @@ GlueXSensitiveDetectorSTC::GlueXSensitiveDetectorSTC(
  : G4VSensitiveDetector(src),
    fHitsMap(src.fHitsMap), fPointsMap(src.fPointsMap)
 {
+   G4AutoLock barrier(&fMutex);
    ++instanceCount;
 }
 
 GlueXSensitiveDetectorSTC &GlueXSensitiveDetectorSTC::operator=(const
                                          GlueXSensitiveDetectorSTC &src)
 {
+   G4AutoLock barrier(&fMutex);
    *(G4VSensitiveDetector*)this = src;
    fHitsMap = src.fHitsMap;
    fPointsMap = src.fPointsMap;
@@ -153,12 +151,13 @@ GlueXSensitiveDetectorSTC &GlueXSensitiveDetectorSTC::operator=(const
 
 GlueXSensitiveDetectorSTC::~GlueXSensitiveDetectorSTC() 
 {
+   G4AutoLock barrier(&fMutex);
    --instanceCount;
 }
 
 void GlueXSensitiveDetectorSTC::Initialize(G4HCofThisEvent* hce)
 {
-   fHitsMap = new 
+   fHitsMap = new
               GlueXHitsMapSTCpaddle(SensitiveDetectorName, collectionName[0]);
    fPointsMap = new
               GlueXHitsMapSTCpoint(SensitiveDetectorName, collectionName[1]);
@@ -168,7 +167,7 @@ void GlueXSensitiveDetectorSTC::Initialize(G4HCofThisEvent* hce)
 }
 
 G4bool GlueXSensitiveDetectorSTC::ProcessHits(G4Step* step, 
-                                              G4TouchableHistory* unused)
+                                              G4TouchableHistory* /* ROhist */)
 {
    double dEsum = step->GetTotalEnergyDeposit();
    if (dEsum == 0)
@@ -207,8 +206,11 @@ G4bool GlueXSensitiveDetectorSTC::ProcessHits(G4Step* step,
    int sector = GetIdent("sector", touch);
    G4Track *track = step->GetTrack();
    G4int trackID = track->GetTrackID();
-      GlueXUserTrackInformation *trackinfo = (GlueXUserTrackInformation*)
-                                             track->GetUserInformation();
+   int pdgtype = track->GetDynamicParticle()->GetPDGcode();
+   int g3type = GlueXPrimaryGeneratorAction::ConvertPdgToGeant3(pdgtype);
+   GlueXUserTrackInformation *trackinfo = (GlueXUserTrackInformation*)
+                                          track->GetUserInformation();
+   int itrack = trackinfo->GetGlueXTrackID();
    if (trackinfo->GetGlueXHistory() == 0) {
       G4int key = fPointsMap->entries();
       GlueXHitSTCpoint* lastPoint = (*fPointsMap)[key - 1];
@@ -216,24 +218,22 @@ G4bool GlueXSensitiveDetectorSTC::ProcessHits(G4Step* step,
           fabs(lastPoint->t_ns - t/ns) > 0.1 ||
           fabs(lastPoint->z_cm - x[2]/cm) > 0.1)
       {
-         GlueXHitSTCpoint* newPoint = new GlueXHitSTCpoint();
+         GlueXHitSTCpoint newPoint;
+         newPoint.ptype_G3 = g3type;
+         newPoint.track_ = trackID;
+         newPoint.trackID_ = itrack;
+         newPoint.primary_ = (track->GetParentID() == 0);
+         newPoint.sector_ = sector;
+         newPoint.t_ns = t/ns;
+         newPoint.z_cm = x[2]/cm;
+         newPoint.r_cm = x.perp()/cm;
+         newPoint.phi_rad = x.phi();
+         newPoint.px_GeV = pin[0]/GeV;
+         newPoint.py_GeV = pin[1]/GeV;
+         newPoint.pz_GeV = pin[2]/GeV;
+         newPoint.E_GeV = Ein/GeV;
+         newPoint.dEdx_GeV_cm = dEdx/(GeV/cm);
          fPointsMap->add(key, newPoint);
-         int pdgtype = track->GetDynamicParticle()->GetPDGcode();
-         int g3type = GlueXPrimaryGeneratorAction::ConvertPdgToGeant3(pdgtype);
-         newPoint->ptype_G3 = g3type;
-         newPoint->track_ = trackID;
-         newPoint->trackID_ = trackinfo->GetGlueXTrackID();
-         newPoint->primary_ = (track->GetParentID() == 0);
-         newPoint->sector_ = sector;
-         newPoint->t_ns = t/ns;
-         newPoint->z_cm = x[2]/cm;
-         newPoint->r_cm = x.perp()/cm;
-         newPoint->phi_rad = x.phi();
-         newPoint->px_GeV = pin[0]/GeV;
-         newPoint->py_GeV = pin[1]/GeV;
-         newPoint->pz_GeV = pin[2]/GeV;
-         newPoint->E_GeV = Ein/GeV;
-         newPoint->dEdx_GeV_cm = dEdx/(GeV/cm);
       }
    }
 
@@ -243,8 +243,9 @@ G4bool GlueXSensitiveDetectorSTC::ProcessHits(G4Step* step,
       int key = GlueXHitSTCpaddle::GetKey(sector);
       GlueXHitSTCpaddle *paddle = (*fHitsMap)[key];
       if (paddle == 0) {
-         paddle = new GlueXHitSTCpaddle(sector);
-         fHitsMap->add(key, paddle);
+         GlueXHitSTCpaddle newpaddle(sector);
+         fHitsMap->add(key, newpaddle);
+         paddle = (*fHitsMap)[key];
       }
 
       double dbent = 0.0;
@@ -288,52 +289,39 @@ G4bool GlueXSensitiveDetectorSTC::ProcessHits(G4Step* step,
          return false;
       }
 
-      
       // Add the hit to the hits vector, maintaining strict time ordering
 
+      int merge_hit = 0;
       std::vector<GlueXHitSTCpaddle::hitinfo_t>::iterator hiter;
       for (hiter = paddle->hits.begin(); hiter != paddle->hits.end(); ++hiter) {
          if (fabs(hiter->t_ns*ns - tcorr) < TWO_HIT_TIME_RESOL) {
+            merge_hit = 1;
             break;
          }
          else if (hiter->t_ns*ns > tcorr) {
-            hiter = paddle->hits.insert(hiter, GlueXHitSTCpaddle::hitinfo_t());
-            hiter->t_ns = 1e99;
             break;
          }
       }
-
-      GlueXUserTrackInformation *trackinfo = (GlueXUserTrackInformation*)
-                                             track->GetUserInformation();
-      if (hiter != paddle->hits.end()) {             // merge with former hit
+      if (merge_hit) {
          // Use the time from the earlier hit but add the charge
          hiter->dE_MeV += dEcorr/MeV;
          if (hiter->t_ns*ns > tcorr) {
             hiter->t_ns = tcorr/ns;
-            int pdgtype = track->GetDynamicParticle()->GetPDGcode();
-            int g3type = GlueXPrimaryGeneratorAction::ConvertPdgToGeant3(pdgtype);
-            hiter->itrack_ = trackinfo->GetGlueXTrackID();
+            hiter->itrack_ = itrack;
             hiter->ptype_G3 = g3type;
             hiter->t0_ns = t/ns;
             hiter->z_cm = x[2]/cm;
          }
       }
-      else if ((int)paddle->hits.size() < MAX_HITS)	{   // create new hit 
-         GlueXHitSTCpaddle::hitinfo_t newhit;
-         newhit.dE_MeV = dEcorr/MeV;
-         newhit.t_ns = tcorr/ns;
-         int pdgtype = track->GetDynamicParticle()->GetPDGcode();
-         int g3type = GlueXPrimaryGeneratorAction::ConvertPdgToGeant3(pdgtype);
-         newhit.itrack_ = trackinfo->GetGlueXTrackID();
-         newhit.ptype_G3 = g3type;
-         newhit.t0_ns = t/ns;
-         newhit.z_cm = x[2]/cm;
-         paddle->hits.push_back(newhit);
-      }
       else {
-         G4cerr << "GlueXSensitiveDetectorSTC::ProcessHits error: "
-             << "max hit count " << MAX_HITS << " exceeded, truncating!"
-             << G4endl;
+         // create new hit 
+         hiter = paddle->hits.insert(hiter, GlueXHitSTCpaddle::hitinfo_t());
+         hiter->dE_MeV = dEcorr/MeV;
+         hiter->t_ns = tcorr/ns;
+         hiter->itrack_ = itrack;
+         hiter->ptype_G3 = g3type;
+         hiter->t0_ns = t/ns;
+         hiter->z_cm = x[2]/cm;
       }
    }
    return true;
@@ -390,7 +378,7 @@ void GlueXSensitiveDetectorSTC::EndOfEvent(G4HCofThisEvent*)
       std::vector<GlueXHitSTCpaddle::hitinfo_t> &hits = siter->second->hits;
       // apply a pulse height threshold cut
       for (unsigned int ih=0; ih < hits.size(); ++ih) {
-         if (hits[ih].dE_MeV < THRESH_MEV) {
+         if (hits[ih].dE_MeV <= THRESH_MEV) {
             hits.erase(hits.begin() + ih);
             --ih;
          }
@@ -398,7 +386,15 @@ void GlueXSensitiveDetectorSTC::EndOfEvent(G4HCofThisEvent*)
       if (hits.size() > 0) {
          hddm_s::StcPaddleList paddle = startCntr.addStcPaddles(1);
          paddle(0).setSector(siter->second->sector_);
-         for (int ih=0; ih < (int)hits.size(); ++ih) {
+         int hitscount = hits.size();
+         if (hitscount > MAX_HITS) {
+            hitscount = MAX_HITS;
+            G4cerr << "GlueXSensitiveDetectorSTC::EndOfEvent warning: "
+                   << "max hit count " << MAX_HITS << " exceeded, "
+                   << hits.size() - hitscount << " hits discarded."
+                   << G4endl;
+         }
+         for (int ih=0; ih < hitscount; ++ih) {
             hddm_s::StcTruthHitList thit = paddle(0).addStcTruthHits(1);
             thit(0).setDE(hits[ih].dE_MeV*MeV/GeV);
             thit(0).setT(hits[ih].t_ns);
@@ -408,7 +404,7 @@ void GlueXSensitiveDetectorSTC::EndOfEvent(G4HCofThisEvent*)
       }
    }
 
-   // Collect and output the paddleTruthPoints
+   // Collect and output the stcTruthPoints
    for (piter = points->begin(); piter != points->end(); ++piter) {
       hddm_s::StcTruthPointList point = startCntr.addStcTruthPoints(1);
       point(0).setE(piter->second->E_GeV);
@@ -446,10 +442,9 @@ int GlueXSensitiveDetectorSTC::GetIdent(std::string div,
       }
       identifiers = &Refsys::fIdentifierTable[volId];
       if ((iter = identifiers->find(div)) != identifiers->end()) {
-         if (dynamic_cast<G4PVPlacement*>(pvol))
-            return iter->second[pvol->GetCopyNo() - 1];
-         else
-            return iter->second[pvol->GetCopyNo()];
+         int copyNum = touch->GetCopyNumber(depth);
+         copyNum += (dynamic_cast<G4PVPlacement*>(pvol))? -1 : 0;
+         return iter->second[copyNum];
       }
    }
    return -1;

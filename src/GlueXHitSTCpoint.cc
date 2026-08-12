@@ -8,29 +8,47 @@
 
 G4ThreadLocal G4Allocator<GlueXHitSTCpoint>* GlueXHitSTCpointAllocator = 0;
 
-int GlueXHitSTCpoint::operator==(const GlueXHitSTCpoint &right) const
+GlueXHitSTCpoint::GlueXHitSTCpoint(const GlueXHitSTCpoint &src)
 {
-   if (E_GeV          == right.E_GeV       &&
-       dEdx_GeV_cm    == right.dEdx_GeV_cm &&
-       phi_rad        == right.phi_rad     &&
-       primary_       == right.primary_    &&
-       ptype_G3       == right.ptype_G3    &&
-       px_GeV         == right.px_GeV      &&
-       py_GeV         == right.py_GeV      &&
-       pz_GeV         == right.pz_GeV      &&
-       r_cm           == right.r_cm        &&
-       z_cm           == right.z_cm        &&
-       t_ns           == right.t_ns        &&
-       sector_        == right.sector_     &&
-       track_         == right.track_      &&
-       trackID_       == right.trackID_    )
-   {
-      return 1;
-   }
-   return 0;
+   E_GeV = src.E_GeV;
+   dEdx_GeV_cm = src.dEdx_GeV_cm;
+   phi_rad = src.phi_rad;
+   primary_ = src.primary_;
+   ptype_G3 = src.ptype_G3;
+   px_GeV = src.px_GeV;
+   py_GeV = src.py_GeV;
+   pz_GeV = src.pz_GeV;
+   r_cm = src.r_cm;
+   z_cm = src.z_cm;
+   t_ns = src.t_ns;
+   sector_ = src.sector_;
+   track_ = src.track_;
+   trackID_ = src.trackID_;
 }
 
-GlueXHitSTCpoint &GlueXHitSTCpoint::operator+=(const GlueXHitSTCpoint &right)
+int GlueXHitSTCpoint::operator==(const GlueXHitSTCpoint &right) const
+{
+   if (E_GeV       != right.E_GeV       ||
+       dEdx_GeV_cm != right.dEdx_GeV_cm ||
+       phi_rad     != right.phi_rad     ||
+       primary_    != right.primary_    ||
+       ptype_G3    != right.ptype_G3    ||
+       px_GeV      != right.px_GeV      ||
+       py_GeV      != right.py_GeV      ||
+       pz_GeV      != right.pz_GeV      ||
+       r_cm        != right.r_cm        ||
+       z_cm        != right.z_cm        ||
+       t_ns        != right.t_ns        ||
+       sector_     != right.sector_     ||
+       track_      != right.track_      ||
+       trackID_    != right.trackID_    )
+   {
+      return 0;
+   }
+   return 1;
+}
+
+GlueXHitSTCpoint &GlueXHitSTCpoint::operator+=(const GlueXHitSTCpoint& /* right */)
 {
    G4cerr << "Error in GlueXHitSTCpoint::operator+= - "
           << "illegal attempt to merge two TruthPoint objects in the stc!"

@@ -15,12 +15,13 @@
 #include "G4VHit.hh"
 #include "G4THitsMap.hh"
 #include "G4Allocator.hh"
-#include "G4SystemOfUnits.hh"
 
 class GlueXHitUPVbar : public G4VHit
 {
  public:
+   GlueXHitUPVbar() {}
    GlueXHitUPVbar(G4int layer, G4int row);
+   GlueXHitUPVbar(const GlueXHitUPVbar &src);
    int operator==(const GlueXHitUPVbar &right) const;
    GlueXHitUPVbar &operator+=(const GlueXHitUPVbar &right);
 

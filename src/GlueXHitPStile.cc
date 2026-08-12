@@ -14,6 +14,13 @@ GlueXHitPStile::GlueXHitPStile(G4int arm, G4int column)
    column_(column)
 {}
 
+GlueXHitPStile::GlueXHitPStile(const GlueXHitPStile &src)
+{
+   arm_ = src.arm_;
+   column_ = src.column_;
+   hits = src.hits;
+}
+
 int GlueXHitPStile::operator==(const GlueXHitPStile &right) const
 {
    if (arm_ !=  right.arm_ || column_ != right.column_)
@@ -22,10 +29,10 @@ int GlueXHitPStile::operator==(const GlueXHitPStile &right) const
       return 0;
 
    for (int ih=0; ih < (int)hits.size(); ++ih) {
-      if (hits[ih].dE_GeV   == right.hits[ih].dE_GeV  &&
-          hits[ih].t_ns     == right.hits[ih].t_ns    &&
-          hits[ih].itrack_  == right.hits[ih].itrack_ &&
-          hits[ih].ptype_G3 == right.hits[ih].ptype_G3)
+      if (hits[ih].dE_GeV   != right.hits[ih].dE_GeV  ||
+          hits[ih].t_ns     != right.hits[ih].t_ns    ||
+          hits[ih].itrack_  != right.hits[ih].itrack_ ||
+          hits[ih].ptype_G3 != right.hits[ih].ptype_G3)
       {
          return 0;
       }
@@ -48,11 +55,7 @@ GlueXHitPStile &GlueXHitPStile::operator+=(const GlueXHitPStile &right)
          if (hiter->t_ns > hitsrc->t_ns)
             break;
       }
-      hiter = hits.insert(hiter, GlueXHitPStile::hitinfo_t());
-      hiter->dE_GeV = hitsrc->dE_GeV;
-      hiter->t_ns = hitsrc->t_ns;
-      hiter->itrack_ = hitsrc->itrack_;
-      hiter->ptype_G3 = hitsrc->ptype_G3;
+      hiter = hits.insert(hiter, *hitsrc);
    }
    return *this;
 }

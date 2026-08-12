@@ -9,12 +9,10 @@
 #include "GlueXPrimaryGeneratorAction.hh"
 #include "GlueXUserEventInformation.hh"
 #include "GlueXUserTrackInformation.hh"
-#include "GlueXUserOptions.hh"
+#include "HddmOutput.hh"
 
-#include <CLHEP/Random/RandPoisson.h>
-#include <Randomize.hh>
-
-#include "G4THitsMap.hh"
+#include "G4VPhysicalVolume.hh"
+#include "G4PVPlacement.hh"
 #include "G4EventManager.hh"
 #include "G4HCofThisEvent.hh"
 #include "G4Step.hh"
@@ -22,12 +20,15 @@
 #include "G4ios.hh"
 
 #include <JANA/JApplication.h>
+#include <JANA/Calibrations/JCalibrationManager.h>
 
-#include <stdio.h>
-#include <malloc.h>
-#include <math.h>
 
-// Cutoff on the total number of allowed hits
+#define USE_ENERGY_WEIGHTED_TIMES 1
+
+// Energy rescale factor to match reconstructed to generated
+double GlueXSensitiveDetectorBCAL::SHOWER_ENERGY_SCALE_FACTOR = 1.008;
+
+// Cutoff on the number of allowed hits per sector
 int GlueXSensitiveDetectorBCAL::MAX_HITS = 100;
 
 // Time resolution for full pulse digitization (unused at present)
@@ -51,8 +52,6 @@ double GlueXSensitiveDetectorBCAL::THRESH_MEV = 1.;
 int GlueXSensitiveDetectorBCAL::instanceCount = 0;
 G4Mutex GlueXSensitiveDetectorBCAL::fMutex = G4MUTEX_INITIALIZER;
 
-std::map<G4LogicalVolume*, int> GlueXSensitiveDetectorBCAL::fVolumeTable;
-
 GlueXSensitiveDetectorBCAL::GlueXSensitiveDetectorBCAL(const G4String& name)
  : G4VSensitiveDetector(name),
    fCellsMap(0), fPointsMap(0)
@@ -68,15 +67,15 @@ GlueXSensitiveDetectorBCAL::GlueXSensitiveDetectorBCAL(const G4String& name)
 
    G4AutoLock barrier(&fMutex);
    if (instanceCount++ == 0) {
-      extern int run_number;
-      extern jana::JApplication *japp;
+      int runno = HddmOutput::getRunNo();
+      extern JApplication *japp;
       if (japp == 0) {
          G4cerr << "Error in GlueXSensitiveDetector constructor - "
                 << "jana global DApplication object not set, "
                 << "cannot continue." << G4endl;
          exit(-1);
       }
-      jana::JCalibration *jcalib = japp->GetJCalibration(run_number);
+     JCalibration *jcalib = japp->GetService<JCalibrationManager>()->GetJCalibration(runno);
       std::map<string, float> bcal_parms;
       jcalib->Get("BCAL/bcal_parms", bcal_parms);
       THRESH_MEV = bcal_parms.at("BCAL_THRESH_MEV");
@@ -100,12 +99,14 @@ GlueXSensitiveDetectorBCAL::GlueXSensitiveDetectorBCAL(
  : G4VSensitiveDetector(src),
    fCellsMap(src.fCellsMap), fPointsMap(src.fPointsMap)
 {
+   G4AutoLock barrier(&fMutex);
    ++instanceCount;
 }
 
 GlueXSensitiveDetectorBCAL &GlueXSensitiveDetectorBCAL::operator=(const
                                          GlueXSensitiveDetectorBCAL &src)
 {
+   G4AutoLock barrier(&fMutex);
    *(G4VSensitiveDetector*)this = src;
    fCellsMap = src.fCellsMap;
    fPointsMap = src.fPointsMap;
@@ -114,12 +115,13 @@ GlueXSensitiveDetectorBCAL &GlueXSensitiveDetectorBCAL::operator=(const
 
 GlueXSensitiveDetectorBCAL::~GlueXSensitiveDetectorBCAL() 
 {
+   G4AutoLock barrier(&fMutex);
    --instanceCount;
 }
 
 void GlueXSensitiveDetectorBCAL::Initialize(G4HCofThisEvent* hce)
 {
-   fCellsMap = new 
+   fCellsMap = new
               GlueXHitsMapBCALcell(SensitiveDetectorName, collectionName[0]);
    fPointsMap = new
               GlueXHitsMapBCALpoint(SensitiveDetectorName, collectionName[1]);
@@ -129,12 +131,9 @@ void GlueXSensitiveDetectorBCAL::Initialize(G4HCofThisEvent* hce)
 }
 
 G4bool GlueXSensitiveDetectorBCAL::ProcessHits(G4Step* step, 
-                                              G4TouchableHistory* unused)
+                                               G4TouchableHistory* /* RHhist */)
 {
    double dEsum = step->GetTotalEnergyDeposit();
-   if (dEsum == 0)
-      return false;
-
    const G4ThreeVector &pin = step->GetPreStepPoint()->GetMomentum();
    const G4ThreeVector &xin = step->GetPreStepPoint()->GetPosition();
    const G4ThreeVector &xout = step->GetPostStepPoint()->GetPosition();
@@ -163,31 +162,73 @@ G4bool GlueXSensitiveDetectorBCAL::ProcessHits(G4Step* step,
 
    G4Track *track = step->GetTrack();
    G4int trackID = track->GetTrackID();
+   int pdgtype = track->GetDynamicParticle()->GetPDGcode();
+   int g3type = GlueXPrimaryGeneratorAction::ConvertPdgToGeant3(pdgtype);
    GlueXUserTrackInformation *trackinfo = (GlueXUserTrackInformation*)
                                           track->GetUserInformation();
+   int itrack = trackinfo->GetGlueXTrackID();
    if (touch->GetVolume()->GetName() == "BCL0") {
-      if (trackinfo->GetGlueXHistory() == 0 &&
-          xin.dot(pin) > 0 && Ein/MeV > THRESH_MEV)
-      {
-         GlueXHitBCALpoint* newPoint = new GlueXHitBCALpoint();
-         G4int key = fPointsMap->entries();
-         fPointsMap->add(key, newPoint);
-         int pdgtype = track->GetDynamicParticle()->GetPDGcode();
-         int g3type = GlueXPrimaryGeneratorAction::ConvertPdgToGeant3(pdgtype);
-         newPoint->ptype_G3 = g3type;
-         newPoint->track_ = trackID;
-         newPoint->trackID_ = trackinfo->GetGlueXTrackID();
-         newPoint->primary_ = (track->GetParentID() == 0);
-         newPoint->t_ns = t/ns;
-         newPoint->z_cm = xin[2]/cm;
-         newPoint->r_cm = xin.perp()/cm;
-         newPoint->phi_rad = xin.phi();
-         newPoint->px_GeV = pin[0]/GeV;
-         newPoint->py_GeV = pin[1]/GeV;
-         newPoint->pz_GeV = pin[2]/GeV;
-         newPoint->E_GeV = Ein/GeV;
+      if (track->GetCurrentStepNumber() == 1)
          trackinfo->SetGlueXHistory(1);
-         trackinfo->SetGlueXTrackID(trackID);
+      if (trackinfo->GetGlueXHistory() == 0 &&
+          xin[0] * pin[0] + xin[1] * pin[1] > 0 &&
+          Ein > THRESH_MEV*MeV)
+      {
+         G4int key = fPointsMap->entries();
+         GlueXHitBCALpoint* lastPoint = (*fPointsMap)[key - 1];
+         // Limit bcal truthPoints to one per track
+         if (lastPoint == 0 || lastPoint->track_ != trackID) {
+            GlueXHitBCALpoint newPoint;
+            newPoint.ptype_G3 = g3type;
+            newPoint.track_ = trackID;
+            newPoint.trackID_ = itrack;
+            newPoint.primary_ = (track->GetParentID() == 0);
+            newPoint.t_ns = t/ns;
+            newPoint.z_cm = xin[2]/cm;
+            newPoint.r_cm = xin.perp()/cm;
+            newPoint.phi_rad = xin.phi();
+            newPoint.px_GeV = pin[0]/GeV;
+            newPoint.py_GeV = pin[1]/GeV;
+            newPoint.pz_GeV = pin[2]/GeV;
+            newPoint.E_GeV = Ein/GeV;
+            fPointsMap->add(key, newPoint);
+         }
+ 
+         // The original HDGeant hits code for the BCal had a heavy-weight
+         // recording system implemented to assign every hit to a particular
+         // incident particle ID. This ID was unique to the BCal subsystem,
+         // and not used anywhere else in the hits record. Each track that
+         // entered the BCAL modules was assigned its own ID unless it was
+         // within some rectangular window of an existing entry in the
+         // incident_particle table, in which case it could supersede the
+         // existing entry (if its energy was greater) or be ignored. When
+         // BCAL hits were recorded, each was assigned the incident particle
+         // id that it was closest to in the phi,z plane. There was no upper
+         // limit on that distance, so the association could be considered
+         // to be a weak link.
+         //
+         // At one time, it seems that the incident particle table was being
+         // written out to the hddm record at the end of event processing
+         // because there is a tag defined in the hddm record called 
+         // bcalTruthIncidentParticle, but the present code in hitBCal.cc 
+         // does not fill in this tag when it writes out the hits. I have
+         // no idea whether this ID system is of any use or if it is an
+         // artifact of some obsolete studies, but since it is being 
+         // tracked and saved in the existing HDGeant bcal hits code, I
+         // make some attempt to replicate that behavior here.
+         // 
+         // DO NOT use proximity of hits to incident particle entry points
+         // in (phi,z) to associate hits to incident particles -- that is
+         // a time waster and the causal linkage based on this is weak.
+         // Instead, use an inheritance mechanism based on the G4 user
+         // track information object. This user track info object gets
+         // copied from parent track to secondaries through the entire
+         // tracking workflow. The first ancestor that enters the BCal
+         // gets assigned the next available BCAL incident ID, and that
+         // is kept for that track and all of its descendants in the user
+         // trackinfo object.
+  
+         trackinfo->AssignBCALincidentID(track);
       }
       return false;
    }
@@ -201,47 +242,125 @@ G4bool GlueXSensitiveDetectorBCAL::ProcessHits(G4Step* step,
       int key = GlueXHitBCALcell::GetKey(module, layer, sector);
       GlueXHitBCALcell *cell = (*fCellsMap)[key];
       if (cell == 0) {
-         cell = new GlueXHitBCALcell(module, layer, sector);
-         fCellsMap->add(key, cell);
+         GlueXHitBCALcell newcell(module, layer, sector);
+         fCellsMap->add(key, newcell);
+         cell = (*fCellsMap)[key];
       }
 
-      // Add the hit to the hits vector, maintaining strict time ordering
+      // Add the hit to the bcal truth hits list, maintaining strict time ordering
 
+      int merge_hit = 0;
       std::vector<GlueXHitBCALcell::hitinfo_t>::iterator hiter;
       for (hiter = cell->hits.begin(); hiter != cell->hits.end(); ++hiter) {
          if (fabs(hiter->t_ns*ns - t) < TWO_HIT_TIME_RESOL) {
+            merge_hit = 1;
             break;
          }
          else if (hiter->t_ns*ns > t) {
-            hiter = cell->hits.insert(hiter, GlueXHitBCALcell::hitinfo_t());
-            hiter->t_ns = 1e99;
             break;
          }
       }
-
-      GlueXUserTrackInformation *trackinfo = (GlueXUserTrackInformation*)
-                                             track->GetUserInformation();
-      if (hiter != cell->hits.end()) {             // merge with former hit
+      if (merge_hit) {
          // Use the time from the earlier hit but add the energy deposition
-         hiter->E_GeV += dEsum/GeV;
+#if USE_ENERGY_WEIGHTED_TIMES
+         hiter->t_ns = (hiter->t_ns * hiter->E_GeV + 
+                               t/ns * dEsum/GeV) /
+                       (hiter->E_GeV + dEsum/GeV);
+         hiter->zlocal_cm = (hiter->zlocal_cm * hiter->E_GeV +
+                                    xlocal[2]/cm * dEsum/GeV) /
+                            (hiter->E_GeV + dEsum/GeV);
+#else
          if (hiter->t_ns*ns > t) {
             hiter->t_ns = t/ns;
-            hiter->zlocal_cm = x[2]/cm;
-            hiter->itrack_ = trackinfo->GetGlueXTrackID();
+            hiter->zlocal_cm = xlocal[2]/cm;
+            hiter->incidentId_ = trackinfo->GetBCALincidentID();
          }
-      }
-      else if ((int)cell->hits.size() < MAX_HITS)	{   // create new hit 
-         GlueXHitBCALcell::hitinfo_t newhit;
-         newhit.E_GeV = dEsum/GeV;
-         newhit.t_ns = t/ns;
-         newhit.zlocal_cm = x[2]/cm;
-         newhit.itrack_ = trackinfo->GetGlueXTrackID();
-         cell->hits.push_back(newhit);
+#endif
+         // correction factor makes shower yields match hdgeant
+         hiter->E_GeV += dEsum/GeV * SHOWER_ENERGY_SCALE_FACTOR;
       }
       else {
-         G4cerr << "GlueXSensitiveDetectorBCAL::ProcessHits error: "
-             << "max hit count " << MAX_HITS << " exceeded, truncating!"
-             << G4endl;
+         // create new hit 
+         hiter = cell->hits.insert(hiter, GlueXHitBCALcell::hitinfo_t());
+         // correction factor makes shower yields match hdgeant
+         hiter->E_GeV = dEsum/GeV * SHOWER_ENERGY_SCALE_FACTOR;
+         hiter->t_ns = t/ns;
+         hiter->zlocal_cm = xlocal[2]/cm;
+         hiter->incidentId_ = trackinfo->GetBCALincidentID();
+      }
+
+      // Add the hit to the upstream sipm hits list, with strict time ordering
+
+      double udist = MODULE_FULL_LENGTH/2 + xlocal[2];
+      double dEup = dEsum * exp(-udist/ATTENUATION_LENGTH);
+      double tup = t + udist / C_EFFECTIVE;
+      merge_hit = 0;
+      for (hiter = cell->hits.begin(); hiter != cell->hits.end(); ++hiter) {
+         if (fabs(hiter->tup_ns*ns - tup) < TWO_HIT_TIME_RESOL) {
+            merge_hit = 1;
+            break;
+         }
+         else if (hiter->tup_ns*ns > tup) {
+            break;
+         }
+      }
+      if (merge_hit) {
+         // Use the time from the earlier hit but add the energy deposition
+#if USE_ENERGY_WEIGHTED_TIMES
+         hiter->tup_ns = (hiter->tup_ns * hiter->Eup_GeV + 
+                                 tup/ns * dEup/GeV) /
+                       (hiter->Eup_GeV + dEup/GeV);
+#else
+         if (hiter->tup_ns*ns > tup) {
+            hiter->tup_ns = tup/ns;
+         }
+#endif
+         // correction factor makes shower yields match hdgeant
+         hiter->Eup_GeV += dEup/GeV * SHOWER_ENERGY_SCALE_FACTOR;
+      }
+      else {
+         // create new hit 
+         hiter = cell->hits.insert(hiter, GlueXHitBCALcell::hitinfo_t());
+         // correction factor makes shower yields match hdgeant
+         hiter->Eup_GeV = dEup/GeV * SHOWER_ENERGY_SCALE_FACTOR;
+         hiter->tup_ns = tup/ns;
+      }
+
+      // Add the hit to the downstream sipm hits list, with strict time ordering
+
+      double ddist = MODULE_FULL_LENGTH/2 - xlocal[2];
+      double dEdown = dEsum * exp(-ddist/ATTENUATION_LENGTH);
+      double tdown = t + ddist / C_EFFECTIVE;
+      merge_hit = 0;
+      for (hiter = cell->hits.begin(); hiter != cell->hits.end(); ++hiter) {
+         if (fabs(hiter->tdown_ns*ns - tdown) < TWO_HIT_TIME_RESOL) {
+            merge_hit = 1;
+            break;
+         }
+         else if (hiter->tdown_ns*ns > tdown) {
+            break;
+         }
+      }
+      if (merge_hit) {
+         // Use the time from the earlier hit but add the energy deposition
+#if USE_ENERGY_WEIGHTED_TIMES
+         hiter->tdown_ns = (hiter->tdown_ns * hiter->Edown_GeV + 
+                                   tdown/ns * dEdown/GeV) /
+                       (hiter->Edown_GeV + dEdown/GeV);
+#else
+         if (hiter->tdown_ns*ns > tdown) {
+            hiter->tdown_ns = tdown/ns;
+         }
+#endif
+         // correction factor makes shower yields match hdgeant
+         hiter->Edown_GeV += dEdown/GeV * SHOWER_ENERGY_SCALE_FACTOR;
+      }
+      else {
+         // create new hit 
+         hiter = cell->hits.insert(hiter, GlueXHitBCALcell::hitinfo_t());
+         // correction factor makes shower yields match hdgeant
+         hiter->Edown_GeV = dEdown/GeV * SHOWER_ENERGY_SCALE_FACTOR;
+         hiter->tdown_ns = tdown/ns;
       }
    }
    return true;
@@ -298,7 +417,7 @@ void GlueXSensitiveDetectorBCAL::EndOfEvent(G4HCofThisEvent*)
       std::vector<GlueXHitBCALcell::hitinfo_t> &hits = citer->second->hits;
       // apply a pulse height threshold cut
       for (unsigned int ih=0; ih < hits.size(); ++ih) {
-         if (hits[ih].E_GeV < THRESH_MEV/1e3) {
+         if (hits[ih].E_GeV <= THRESH_MEV/1e3) {
             hits.erase(hits.begin() + ih);
             --ih;
          }
@@ -308,12 +427,30 @@ void GlueXSensitiveDetectorBCAL::EndOfEvent(G4HCofThisEvent*)
          cell(0).setModule(citer->second->module_);
          cell(0).setLayer(citer->second->layer_);
          cell(0).setSector(citer->second->sector_);
-         for (int ih=0; ih < (int)hits.size(); ++ih) {
+         int hitscount = hits.size();
+         if (hitscount > MAX_HITS) {
+            hitscount = MAX_HITS;
+            G4cerr << "GlueXSensitiveDetectorBCAL::EndOfEvent warning: "
+                   << "max hit count " << MAX_HITS << " exceeded, "
+                   << hits.size() - hitscount << " hits discarded."
+                   << G4endl;
+         }
+         for (int ih=0; ih < hitscount; ++ih) {
             hddm_s::BcalTruthHitList thit = cell(0).addBcalTruthHits(1);
             thit(0).setE(hits[ih].E_GeV);
             thit(0).setT(hits[ih].t_ns);
             thit(0).setZLocal(hits[ih].zlocal_cm);
-            thit(0).setIncident_id(hits[ih].itrack_);
+            thit(0).setIncident_id(hits[ih].incidentId_);
+            if (hits[ih].Eup_GeV >= THRESH_MEV/1e3) {
+               hddm_s::BcalSiPMUpHitList uhit = cell(0).addBcalSiPMUpHits(1);
+               uhit(0).setE(hits[ih].Eup_GeV);
+               uhit(0).setT(hits[ih].tup_ns);
+            }
+            if (hits[ih].Edown_GeV >= THRESH_MEV/1e3) {
+               hddm_s::BcalSiPMDownHitList dhit = cell(0).addBcalSiPMDownHits(1);
+               dhit(0).setE(hits[ih].Edown_GeV);
+               dhit(0).setT(hits[ih].tdown_ns);
+            }
          }
       }
    }
@@ -338,7 +475,7 @@ void GlueXSensitiveDetectorBCAL::EndOfEvent(G4HCofThisEvent*)
 }
 
 int GlueXSensitiveDetectorBCAL::GetIdent(std::string div, 
-                                        const G4VTouchable *touch)
+                                         const G4VTouchable *touch)
 {
    const HddsG4Builder* bldr = GlueXDetectorConstruction::GetBuilder();
    std::map<std::string, std::vector<int> >::const_iterator iter;
@@ -354,10 +491,9 @@ int GlueXSensitiveDetectorBCAL::GetIdent(std::string div,
       }
       identifiers = &Refsys::fIdentifierTable[volId];
       if ((iter = identifiers->find(div)) != identifiers->end()) {
-         if (dynamic_cast<G4PVPlacement*>(pvol))
-            return iter->second[pvol->GetCopyNo() - 1];
-         else
-            return iter->second[pvol->GetCopyNo()];
+         int copyNum = touch->GetCopyNumber(depth);
+         copyNum += (dynamic_cast<G4PVPlacement*>(pvol))? -1 : 0;
+         return iter->second[copyNum];
       }
    }
    return -1;

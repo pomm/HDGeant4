@@ -11,8 +11,6 @@ int HddmOutput::fEventNo = 0;
 std::ofstream *HddmOutput::fHDDMoutfile = 0;
 hddm_s::ostream *HddmOutput::fHDDMostream = 0;
 
-GlueXPseudoDetectorTAG HddmOutput::fTagger(0);
-
 int HddmOutput::instanceCount = 0;
 G4Mutex HddmOutput::fMutex = G4MUTEX_INITIALIZER;
 
@@ -36,6 +34,7 @@ HddmOutput::HddmOutput(const std::string &filename)
 
 HddmOutput::~HddmOutput()
 {
+   G4AutoLock barrier(&fMutex);
    if (fHDDMostream != 0) {
       delete fHDDMostream;
       delete fHDDMoutfile;
@@ -45,18 +44,14 @@ HddmOutput::~HddmOutput()
    --instanceCount;
 }
 
-HddmOutput::HddmOutput(HddmOutput &src)
-{}
-
-HddmOutput& HddmOutput::operator=(HddmOutput &src)
-{
-   return *this;
-}
-
 void HddmOutput::setRunNo(int runno)
 {
-   fRunNo = runno;
-   fTagger.setRunNo(runno);
+   G4AutoLock barrier(&fMutex);
+   extern int run_number;
+   if (run_number > 0)
+      fRunNo = run_number;
+   else
+      fRunNo = runno;
 }
 
 void HddmOutput::WriteOutputHDDM(hddm_s::HDDM &record)
@@ -71,4 +66,3 @@ int HddmOutput::incrementEventNo()
    G4AutoLock barrier(&fMutex);
    return ++fEventNo;
 }
-

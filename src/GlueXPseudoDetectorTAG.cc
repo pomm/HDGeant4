@@ -5,16 +5,20 @@
 // version: october 20, 2016
 
 #include "GlueXPseudoDetectorTAG.hh"
-#include "GlueXPrimaryGeneratorAction.hh"
 #include "GlueXUserEventInformation.hh"
-#include "GlueXUserOptions.hh"
+#include "GlueXPhotonBeamGenerator.hh"
 
 #include "G4EventManager.hh"
+#include "G4SystemOfUnits.hh"
 
 #include <JANA/JApplication.h>
+#include <JANA/Calibrations/JCalibrationManager.h>
 
+
+// Place limits on the number of hits per counter or column per event
 int GlueXPseudoDetectorTAG::HODO_MAX_HITS = 5000;
 int GlueXPseudoDetectorTAG::MICRO_MAX_HITS = 5000;
+
 double GlueXPseudoDetectorTAG::HODO_TWO_HIT_TIME_RESOL = 25.*ns;
 double GlueXPseudoDetectorTAG::MICRO_TWO_HIT_TIME_RESOL = 25.*ns;
 double GlueXPseudoDetectorTAG::MICRO_HIT_DE = 3.5*MeV;
@@ -36,52 +40,52 @@ double GlueXPseudoDetectorTAG::TAGGER_TMAX_NS = +200.*ns;
 int GlueXPseudoDetectorTAG::instanceCount = 0;
 G4Mutex GlueXPseudoDetectorTAG::fMutex = G4MUTEX_INITIALIZER;
 
-GlueXPseudoDetectorTAG::GlueXPseudoDetectorTAG(int run_number)
- : fRunNo(run_number)
+GlueXPseudoDetectorTAG::GlueXPseudoDetectorTAG(int runNo)
+ : fRunNo(runNo)
 {
-   if (run_number != 0)
-      setRunNo(run_number);
+   if (runNo != 0)
+      setRunNo(runNo);
+   G4AutoLock barrier(&fMutex);
    instanceCount++;
 }
 
 GlueXPseudoDetectorTAG::~GlueXPseudoDetectorTAG()
 {
+   G4AutoLock barrier(&fMutex);
    --instanceCount;
-}
-
-GlueXPseudoDetectorTAG::GlueXPseudoDetectorTAG(GlueXPseudoDetectorTAG &src)
-{}
-
-GlueXPseudoDetectorTAG& GlueXPseudoDetectorTAG::operator=(GlueXPseudoDetectorTAG &src)
-{
-   return *this;
 }
 
 inline void GlueXPseudoDetectorTAG::setRunNo(int runno)
 {
    fRunNo = runno;
    G4AutoLock barrier(&fMutex);
-   extern int run_number;
-   extern jana::JApplication *japp;
+   extern JApplication *japp;
    if (japp == 0) {
       G4cerr << "Error in GlueXPseudoDetectorTAG constructor - "
              << "jana global DApplication object not set, "
              << "cannot continue." << G4endl;
       exit(-1);
    }
-   run_number = runno;
-   jana::JCalibration *jcalib = japp->GetJCalibration(run_number);
+   JCalibration *jcalib = japp->GetService<JCalibrationManager>()->GetJCalibration(runno);
    std::map<string, float> beam_parms;
    jcalib->Get("PHOTON_BEAM/endpoint_energy", beam_parms);
    double endpoint_energy = beam_parms.at("PHOTON_BEAM_ENDPOINT_ENERGY")*GeV;
+   std::map<string, float> beam_calib;
+   jcalib->Get("PHOTON_BEAM/hodoscope/endpoint_calib", beam_calib);
+   double endpoint_calib = endpoint_energy;
+   if (beam_calib.find("TAGGER_CALIB_ENERGY") != beam_calib.end()) {
+      endpoint_calib = beam_calib.at("TAGGER_CALIB_ENERGY")*GeV;
+   }
    std::vector<std::map<string, float> > micro_parms;
    jcalib->Get("PHOTON_BEAM/microscope/scaled_energy_range", micro_parms);
    double Emin = 1e9;
    double Emax = -1e9;
    for (unsigned int i=0; i < micro_parms.size(); ++i) {
       MICRO_CHANNEL_NUMBER[i] = micro_parms[i]["column"];
-      MICRO_CHANNEL_EMIN[i] = micro_parms[i]["xlow"] * endpoint_energy;
-      MICRO_CHANNEL_EMAX[i] = micro_parms[i]["xhigh"] * endpoint_energy;
+      MICRO_CHANNEL_EMIN[i] = micro_parms[i]["xlow"] * endpoint_calib
+                              + endpoint_energy - endpoint_calib;
+      MICRO_CHANNEL_EMAX[i] = micro_parms[i]["xhigh"] * endpoint_calib
+                              + endpoint_energy - endpoint_calib;
       Emin = (MICRO_CHANNEL_EMIN[i] < Emin)? MICRO_CHANNEL_EMIN[i] : Emin;
       Emax = (MICRO_CHANNEL_EMAX[i] > Emax)? MICRO_CHANNEL_EMAX[i] : Emax;
    }
@@ -91,8 +95,10 @@ inline void GlueXPseudoDetectorTAG::setRunNo(int runno)
    jcalib->Get("PHOTON_BEAM/hodoscope/scaled_energy_range", hodo_parms);
    for (unsigned int i=0; i < hodo_parms.size(); ++i) {
       HODO_CHANNEL_NUMBER[i] = hodo_parms[i]["counter"];
-      HODO_CHANNEL_EMIN[i] = hodo_parms[i]["xlow"] * endpoint_energy;
-      HODO_CHANNEL_EMAX[i] = hodo_parms[i]["xhigh"] * endpoint_energy;
+      HODO_CHANNEL_EMIN[i] = hodo_parms[i]["xlow"] * endpoint_calib
+                              + endpoint_energy - endpoint_calib;
+      HODO_CHANNEL_EMAX[i] = hodo_parms[i]["xhigh"] * endpoint_calib
+                              + endpoint_energy - endpoint_calib;
       Emin = (HODO_CHANNEL_EMIN[i] < Emin)? HODO_CHANNEL_EMIN[i] : Emin;
       Emax = (HODO_CHANNEL_EMAX[i] > Emax)? HODO_CHANNEL_EMAX[i] : Emax;
    }
@@ -102,53 +108,54 @@ inline void GlueXPseudoDetectorTAG::setRunNo(int runno)
    G4cout << "TAGGER: all parameters loaded from ccdb" << G4endl;
 }
 
-int GlueXPseudoDetectorTAG::addTaggerPhoton(G4Event *event, G4ThreeVector &vtx,
-                                            double energy, double time, int bg)
+int GlueXPseudoDetectorTAG::addTaggerPhoton(const G4Event *event,
+                                            double energy, double time,
+                                            int bg) const
 {
    // look up which tagger channel is hit, if any
 
    int micro_channel = -1;
    int hodo_channel = -1;
-   double E = energy;
-   if (E < MICRO_LIMITS_ERANGE[0] && E > MICRO_LIMITS_ERANGE[1]) {
-      int i = MICRO_NCHANNELS * (E - MICRO_LIMITS_ERANGE[0]) /
+   double micro_energy = energy;
+   double hodo_energy = energy;
+
+   if (energy < MICRO_LIMITS_ERANGE[0] && energy > MICRO_LIMITS_ERANGE[1]) {
+      int i = MICRO_NCHANNELS * (energy - MICRO_LIMITS_ERANGE[0]) /
               (MICRO_LIMITS_ERANGE[1] - MICRO_LIMITS_ERANGE[0]);
-      while (E < MICRO_CHANNEL_EMIN[i])
+      while (energy < MICRO_CHANNEL_EMIN[i] || MICRO_CHANNEL_EMIN[i] < 1.) 
          ++i;
-      while (E > MICRO_CHANNEL_EMAX[i])
+      while (energy > MICRO_CHANNEL_EMAX[i] || MICRO_CHANNEL_EMAX[i] < 1.) 
          --i;
-      if (E >= MICRO_CHANNEL_EMIN[i] && E <= MICRO_CHANNEL_EMAX[i]) {
-         E = (MICRO_CHANNEL_EMIN[i] + MICRO_CHANNEL_EMAX[i]) / 2;
+      if (energy >= MICRO_CHANNEL_EMIN[i] && energy <= MICRO_CHANNEL_EMAX[i]) {
+         micro_energy = (MICRO_CHANNEL_EMIN[i] + MICRO_CHANNEL_EMAX[i]) / 2;
          micro_channel = MICRO_CHANNEL_NUMBER[i];
       }
    }
-   else if (E < HODO_LIMITS_ERANGE[0] && E > HODO_LIMITS_ERANGE[1]) {
-      int i = HODO_NCHANNELS * (E - HODO_LIMITS_ERANGE[0]) /
+   if (energy < HODO_LIMITS_ERANGE[0] && energy > HODO_LIMITS_ERANGE[1]) {
+      int i = HODO_NCHANNELS * (energy - HODO_LIMITS_ERANGE[0]) /
               (HODO_LIMITS_ERANGE[1] - HODO_LIMITS_ERANGE[0]);
-      while (E < HODO_CHANNEL_EMIN[i])
+      while (energy < HODO_CHANNEL_EMIN[i] || HODO_CHANNEL_EMIN[i] < 1.) 
          ++i;
-      while (E > HODO_CHANNEL_EMAX[i])
+      while (energy > HODO_CHANNEL_EMAX[i] || HODO_CHANNEL_EMAX[i] < 1.) 
          --i;
-      if (E >= HODO_CHANNEL_EMIN[i] && E <= HODO_CHANNEL_EMAX[i]) {
-         E = (HODO_CHANNEL_EMIN[i] + HODO_CHANNEL_EMAX[i]) / 2;
+      if (energy >= HODO_CHANNEL_EMIN[i] && energy <= HODO_CHANNEL_EMAX[i]) {
+         hodo_energy = (HODO_CHANNEL_EMIN[i] + HODO_CHANNEL_EMAX[i]) / 2;
          hodo_channel = HODO_CHANNEL_NUMBER[i];
       }
    }
+
    if (micro_channel < 0 && hodo_channel < 0)
       return false;
 
-   double time_ref_plane_z = GlueXPrimaryGeneratorAction::getTargetCenterZ();
-   double beam_period = GlueXPrimaryGeneratorAction::getBeamBucketPeriod();
-   double beam_velocity = GlueXPrimaryGeneratorAction::getBeamVelocity();
-   double t = time - (vtx[2] - time_ref_plane_z) / beam_velocity;
-   t = floor(t / beam_period + 0.5) * beam_period;
+   double beam_period = GlueXPhotonBeamGenerator::getBeamBucketPeriod();
+   double t = floor(time / beam_period + 0.5) * beam_period;
 
    // pack hit into ouptut hddm record
  
    G4VUserEventInformation* info = event->GetUserInformation();
    hddm_s::HDDM *record = ((GlueXUserEventInformation*)info)->getOutputRecord();
    if (record == 0) {
-      G4cerr << "GlueXPseudoDetectorTAG::addTaggerHit error - "
+      G4cerr << "GlueXPseudoDetectorTAG::addTaggerPhoton error - "
              << "hits seen but no output hddm record to save them into, "
              << "cannot continue!" << G4endl;
       exit(1);
@@ -177,7 +184,7 @@ int GlueXPseudoDetectorTAG::addTaggerPhoton(G4Event *event, G4ThreeVector &vtx,
          citer = columns.begin();
          citer->setColumn(micro_channel);
          citer->setRow(0);
-         citer->setE(E/GeV);
+         citer->setE(micro_energy/GeV);
       }
       hddm_s::TaggerTruthHitList hits = citer->getTaggerTruthHits();
       hddm_s::TaggerTruthHitList::iterator hiter;
@@ -186,12 +193,19 @@ int GlueXPseudoDetectorTAG::addTaggerPhoton(G4Event *event, G4ThreeVector &vtx,
          if (fabs(t - hiter->getT()*ns) < MICRO_TWO_HIT_TIME_RESOL)
             break;
          else if (hiter->getT()*ns > t) {
-            hits = citer->addTaggerTruthHits(1, ++hit);
-            hiter = hits.begin();
-            hiter->setE(energy/GeV);
-            hiter->setT(1e99);
-            hiter->setDE(0);
-            hiter->setBg(bg);
+            if (citer->getTaggerTruthHits().size() < MICRO_MAX_HITS) {
+               hits = citer->addTaggerTruthHits(1, hit);
+               hiter = hits.begin();
+               hiter->setE(energy/GeV);
+               hiter->setT(1e99);
+               hiter->setDE(0);
+               hiter->setBg(bg);
+            }
+            else {
+               G4cerr << "GlueXPseudoDetectorTAG::addTaggerPhoton warning: "
+                      << "TAGM max hit count " << MICRO_MAX_HITS 
+                      << " exceeded, discarding hit." << G4endl;
+            }
             break;
          }
       }
@@ -204,12 +218,19 @@ int GlueXPseudoDetectorTAG::addTaggerPhoton(G4Event *event, G4ThreeVector &vtx,
          hiter->setDE(hiter->getDE() + MICRO_HIT_DE/GeV);
       }
       else {                                 // make a new hit
-         hits = citer->addTaggerTruthHits();
-         hiter = hits.begin();
-         hiter->setT(t/ns);
-         hiter->setE(energy/GeV);
-         hiter->setDE(MICRO_HIT_DE/GeV);
-         hiter->setBg(bg);
+         if (citer->getTaggerTruthHits().size() < MICRO_MAX_HITS) {
+            hits = citer->addTaggerTruthHits();
+            hiter = hits.begin();
+            hiter->setT(t/ns);
+            hiter->setE(energy/GeV);
+            hiter->setDE(MICRO_HIT_DE/GeV);
+            hiter->setBg(bg);
+         }
+         else {
+            G4cerr << "GlueXPseudoDetectorTAG::addTaggerPhoton warning: "
+             << "TAGM max hit count " << MICRO_MAX_HITS << " exceeded,"
+             << " discarding hit." << G4endl;
+         }
       }
    }
  
@@ -226,7 +247,7 @@ int GlueXPseudoDetectorTAG::addTaggerPhoton(G4Event *event, G4ThreeVector &vtx,
          counters = tagger.addHodoChannels();
          citer = counters.begin();
          citer->setCounterId(hodo_channel);
-         citer->setE(E/GeV);
+         citer->setE(hodo_energy/GeV);
       }
       hddm_s::TaggerTruthHitList hits = citer->getTaggerTruthHits();
       hddm_s::TaggerTruthHitList::iterator hiter;
@@ -235,12 +256,19 @@ int GlueXPseudoDetectorTAG::addTaggerPhoton(G4Event *event, G4ThreeVector &vtx,
          if (fabs(t - hiter->getT()*ns) < HODO_TWO_HIT_TIME_RESOL)
             break;
          else if (hiter->getT()*ns > t) {
-            hits = citer->addTaggerTruthHits(1, ++hit);
-            hiter = hits.begin();
-            hiter->setE(energy/GeV);
-            hiter->setT(1e99);
-            hiter->setDE(0);
-            hiter->setBg(bg);
+            if (citer->getTaggerTruthHits().size() < HODO_MAX_HITS) {
+               hits = citer->addTaggerTruthHits(1, hit);
+               hiter = hits.begin();
+               hiter->setE(energy/GeV);
+               hiter->setT(1e99);
+               hiter->setDE(0);
+               hiter->setBg(bg);
+            }
+            else {
+               G4cerr << "GlueXPseudoDetectorTAG::addTaggerPhoton warning: "
+                << "TAGH max hit count " << HODO_MAX_HITS << " exceeded,"
+                << " discarding hit." << G4endl;
+            }
             break;
          }
       }
@@ -253,18 +281,25 @@ int GlueXPseudoDetectorTAG::addTaggerPhoton(G4Event *event, G4ThreeVector &vtx,
          hiter->setDE(hiter->getDE() + HODO_HIT_DE/GeV);
       }
       else {                                 // make a new hit
-         hits = citer->addTaggerTruthHits();
-         hiter = hits.begin();
-         hiter->setT(t/ns);
-         hiter->setE(energy/GeV);
-         hiter->setDE(HODO_HIT_DE/GeV);
-         hiter->setBg(bg);
+         if (citer->getTaggerTruthHits().size() < HODO_MAX_HITS) {
+            hits = citer->addTaggerTruthHits();
+            hiter = hits.begin();
+            hiter->setT(t/ns);
+            hiter->setE(energy/GeV);
+            hiter->setDE(HODO_HIT_DE/GeV);
+            hiter->setBg(bg);
+         }
+         else {
+            G4cerr << "GlueXPseudoDetectorTAG::addTaggerPhoton warning: "
+             << "TAGH max hit count " << MICRO_MAX_HITS << " exceeded,"
+             << " discarding hit." << G4endl;
+         }
       }
    }
    return (micro_channel > -1 || hodo_channel > -1);
 }
 
-int GlueXPseudoDetectorTAG::addRFsync(G4Event *event, double tsync)
+int GlueXPseudoDetectorTAG::addRFsync(const G4Event *event, double tsync) const
 {
    G4VUserEventInformation* info = event->GetUserInformation();
    hddm_s::HDDM *record = ((GlueXUserEventInformation*)info)->getOutputRecord();

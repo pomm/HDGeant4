@@ -24,7 +24,7 @@
 // ********************************************************************
 //
 //
-// $Id: G4VDivisionParameterisation.cc 90699 2015-06-08 09:34:37Z gcosmo $
+// $Id: G4VDivisionParameterisation.cc 92625 2015-09-09 12:34:07Z gcosmo $
 //
 // class G4VDivisionParameterisation Implementation file
 //
@@ -39,6 +39,11 @@
 #include "G4RotationMatrix.hh"
 #include "G4ReflectedSolid.hh"
 #include "G4GeometryTolerance.hh"
+#include "G4AutoDelete.hh"
+
+G4VDivisionParameterisationSubInstanceManager G4VDivisionParameterisation::subInstanceManager;
+template <class T> G4ThreadLocal G4int G4Splitter<T>::workertotalspace = 0;
+template <class T> G4ThreadLocal T* G4Splitter<T>::offset = 0; 
 
 const G4int G4VDivisionParameterisation::verbose = 5;
 
@@ -49,8 +54,10 @@ G4VDivisionParameterisation( EAxis axis, G4int nDiv,
                              DivisionType divType, G4VSolid* motherSolid )
   : faxis(axis), fnDiv( nDiv), fwidth(step), foffset(offset),
     fDivisionType(divType), fmotherSolid( motherSolid ), fReflectedSolid(false),
-    fDeleteSolid(false), theVoluFirstCopyNo(1), fhgap(0.) //, fRotMatrix(0)
+    fDeleteSolid(false), theVoluFirstCopyNo(1), fhgap(0.)
 {
+  gClassInstanceId = subInstanceManager.CreateSubInstance(); 
+
 #ifdef G4DIVDEBUG
   if (verbose >= 1)
   {
@@ -67,7 +74,6 @@ G4VDivisionParameterisation( EAxis axis, G4int nDiv,
 G4VDivisionParameterisation::~G4VDivisionParameterisation()
 {
   if (fDeleteSolid) delete fmotherSolid;
-  //if (fRotMatrix) { delete fRotMatrix; fRotMatrix=0; }
 }
 
 //--------------------------------------------------------------------------
@@ -88,9 +94,17 @@ void
 G4VDivisionParameterisation::
 ChangeRotMatrix( G4VPhysicalVolume *physVol, G4double rotZ ) const
 {
-  G4RotationMatrix *fRot = physVol->GetRotation();
-  *fRot = G4RotationMatrix();
-  fRot->rotateZ( rotZ );
+  if (subInstanceManager.workertotalspace == 0)
+     subInstanceManager.InitializeWorker();
+
+  if (!G4MT_fRot)
+  {
+    G4MT_fRot = new G4RotationMatrix();
+    G4AutoDelete::Register(G4MT_fRot);
+  }
+  *G4MT_fRot = G4RotationMatrix::IDENTITY;
+  G4MT_fRot->rotateZ( rotZ );
+  physVol->SetRotation(G4MT_fRot);
 }
 
 //--------------------------------------------------------------------------

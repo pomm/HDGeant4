@@ -12,14 +12,10 @@
 #define GlueXSensitiveDetectorCCAL_h 1
 
 #include "G4VSensitiveDetector.hh"
-#include "G4VPhysicalVolume.hh"
-#include "G4Threading.hh"
 #include "G4AutoLock.hh"
 
 #include "GlueXHitCCALblock.hh"
 #include "GlueXHitCCALpoint.hh"
-
-#include <vector>
 
 class G4Step;
 class G4HCofThisEvent;
@@ -33,7 +29,7 @@ class GlueXSensitiveDetectorCCAL : public G4VSensitiveDetector
    virtual ~GlueXSensitiveDetectorCCAL();
   
    virtual void Initialize(G4HCofThisEvent* hitCollection);
-   virtual G4bool ProcessHits(G4Step* step, G4TouchableHistory* unused);
+   virtual G4bool ProcessHits(G4Step* step, G4TouchableHistory* ROhist);
    virtual void EndOfEvent(G4HCofThisEvent* hitCollection);
 
    int GetIdent(std::string div, const G4VTouchable *touch);
@@ -42,7 +38,7 @@ class GlueXSensitiveDetectorCCAL : public G4VSensitiveDetector
    GlueXHitsMapCCALblock* fBlocksMap;
    GlueXHitsMapCCALpoint* fPointsMap;
 
-   static std::map<G4LogicalVolume*, int> fVolumeTable;
+   std::map<G4LogicalVolume*, int> fVolumeTable;
 
    static int MAX_HITS;
    static int CENTRAL_COLUMN;

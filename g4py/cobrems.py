@@ -16,7 +16,7 @@
 import sys
 from array import array
 
-from ROOT import *
+import ROOT
 from Cobrems import *
 
 # set global variables to defaults
@@ -25,6 +25,7 @@ cur = 2.2
 E0 = 12
 Erms = 0.0006
 emit = 2.5e-9
+spot = 0.5e-3
 dist = 76
 coldiam = 0.0034
 radt = 20e-6
@@ -39,14 +40,14 @@ eElim0 = 10.68
 eElim1 = 11.7
 
 # initialize the built-in generator to defaults
-generator = CobremsGenerator(E0, Epeak)
+generator = CobremsGeneration(E0, Epeak)
 
 def usage():
    """
    Print a brief summary of the internal configuration variables
-   that regulate the behavior of the CobremsGenerator and exit.
+   that regulate the behavior of the CobremsGeneration and exit.
    """
-   print """
+   print("""
    Usage: cobrems.init(key=value, ...)
      where key should be one of the following, [defaults in backets]:
       * Epeak - photon energy (GeV) of primary coherent edge [9]
@@ -54,6 +55,7 @@ def usage():
       * E0 - mean energy (GeV) of electron beam [12]
       * Erms - rms energy width (GeV) of electron beam [0.0006]
       * emit - transverse emittance (m rad) of electron beam [2.5e-9]
+      * spot - virtual e-beam spot rms (m) at primary collimator [0.5e-3]
       * dist - distance (m) from radiator to primary collimator [76]
       * coldiam - diameter (m) of primary collimator [0.0034]
       * radt - thickness (m) of radiator crystal [20e-6]
@@ -66,7 +68,7 @@ def usage():
       * bElim1 - upper limit (GeV) of beam background integration window [2.04]
       * eElim0 - lower limit (GeV) of beam endpoint integration window [10.68]
       * eElim1 - upper limit (GeV) of beam endpoint integration window [11.70]
-   """
+   """)
 
 def init(**kwargs):
    """
@@ -95,6 +97,10 @@ def init(**kwargs):
          global emit
          emit = value
          generator.setBeamEmittance(emit)
+      elif arg == "spot":
+         global spot
+         spot = value
+         generator.setCollimatorSpotrms(spot)
       elif arg == "dist":
          global dist
          dist = value
@@ -144,14 +150,14 @@ def init(**kwargs):
 
    # plot the acceptance curve
    global acceptF1
-   acceptF1 = TF1("acceptF1", acceptance, 0, 2, 0)
+   acceptF1 = ROOT.TF1("acceptF1", acceptance, 0, 2, 0)
    acceptF1.SetTitle("\\mbox{acceptance vs }\\theta/\\theta_C")
 
    # plot the beam energy spectrum
    x0 = Emin / E0
    x1 = Emax / E0
    global dRtdxF1
-   dRtdxF1 = TF1("dRtdxF1", dRtdx, x0, x1, 0)
+   dRtdxF1 = ROOT.TF1("dRtdxF1", dRtdx, x0, x1, 0)
    dRtdxF1.SetTitle("\\mbox{photon beam spectrum vs }E_\\gamma\\,/E_0" +
                     "\\mbox{ (/GeV/s)}")
    dRtdxF1.SetNpx(nbins)
@@ -169,7 +175,7 @@ def init(**kwargs):
    dRtdkH1 = 0
    title = "\\mbox{photon beam spectrum vs }E_\\gamma" + \
            "\\mbox{ (/GeV/s)}"
-   dRtdkH1 = TH1D("dRtdkH1", title, nbins, Emin, Emax)
+   dRtdkH1 = ROOT.TH1D("dRtdkH1", title, nbins, Emin, Emax)
    dRtdkH1.GetXaxis().SetRangeUser(Emin + (Emax - Emin)/10., Emax)
    for i in range(0, nbins):
       dRtdkH1.Fill(xvals[i] * E0, yvals[i] / E0)
@@ -184,12 +190,12 @@ def init(**kwargs):
                             dRtdkH1.FindBin(bElim1) - 1) * persec
    erate = dRtdkH1.Integral(dRtdkH1.FindBin(eElim0),
                             dRtdkH1.FindBin(eElim1) - 1) * persec
-   print "beam rate in the peak window [" + str(pElim0) + "," + \
-         str(pElim1) + "] GeV = ", prate, "/s"
-   print "beam rate in the background window [" + str(bElim0) + "," + \
-         str(bElim1) + "] GeV =", brate, "/s"
-   print "beam rate in the endpoint window [" + str(eElim0) + "," + \
-         str(eElim1) + "] GeV =", erate, "/s"
+   print("beam rate in the peak window [" + str(pElim0) + "," + \
+         str(pElim1) + "] GeV = ", prate, "/s")
+   print("beam rate in the background window [" + str(bElim0) + "," + \
+         str(bElim1) + "] GeV =", brate, "/s")
+   print("beam rate in the endpoint window [" + str(eElim0) + "," + \
+         str(eElim1) + "] GeV =", erate, "/s")
 
 def plotCoherent(collimated=1):
    """
@@ -214,8 +220,11 @@ def plotCoherent(collimated=1):
    # convert the result to a spectrum vs photon energy
    global dRcdkH1
    dRcdkH1 = 0
-   title = "collimated photon beam spectrum, coherent part only"
-   dRcdkH1 = TH1D("dRcdkH1", title, nbins, Emin, Emax)
+   if collimated:
+      title = "collimated photon beam spectrum, coherent part only"
+   else:
+      title = "uncollimated photon beam spectrum, coherent part only"
+   dRcdkH1 = ROOT.TH1D("dRcdkH1", title, nbins, Emin, Emax)
    for i in range(0, nbins):
       dRcdkH1.Fill(xvals[i] * E0, yvals[i] / E0)
    dRcdkH1.GetXaxis().SetTitle("E_{#gamma} (GeV)")
@@ -224,6 +233,44 @@ def plotCoherent(collimated=1):
    dRcdkH1.SetStats(0)
    dRcdkH1.Draw("hist")
    return dRcdkH1
+
+def plotEnhancement(collimated=1):
+   """
+   Plot the ratio of the total diamond spectrum to an amorphous
+   bremsstrahlung spectrum with the same endpoint, either pre-collimator
+   (collimated=0) or post-collimator (collimated=1) as a TH1D object.
+   """
+
+   # apply the beam-crystal convolution
+   x0 = Emin / E0
+   x1 = Emax / E0
+   xvals = array('d', nbins * [0])
+   yvals = array('d', nbins * [0])
+   colFlag = generator.getCollimatedFlag()
+   generator.setCollimatedFlag(collimated)
+   generator.setPolarizedFlag(False)
+   for i in range(0, nbins):
+      xvals[i] = x0 + (i + 0.5) * (x1 - x0) / nbins;
+      yvals[i] = dRcdx([xvals[i]]) / dRidx([xvals[i]]) + 1
+   generator.setCollimatedFlag(colFlag)
+   generator.applyBeamCrystalConvolution(nbins, xvals, yvals)
+
+   # convert the result to a spectrum vs photon energy
+   global enhanH1
+   enhanH1 = 0
+   if collimated:
+      title = "collimated photon beam spectrum, enhancement"
+   else:
+      title = "uncollimated photon beam spectrum, enhancement"
+   enhanH1 = ROOT.TH1D("enhanH1", title, nbins, Emin, Emax)
+   for i in range(0, nbins):
+      enhanH1.Fill(xvals[i] * E0, yvals[i])
+   enhanH1.GetXaxis().SetTitle("E_{#gamma} (GeV)")
+   enhanH1.GetYaxis().SetTitle("enhancement")
+   enhanH1.GetYaxis().SetTitleOffset(1.5)
+   enhanH1.SetStats(0)
+   enhanH1.Draw("hist")
+   return enhanH1
 
 def plotIncoherent(collimated=1):
    """
@@ -248,8 +295,11 @@ def plotIncoherent(collimated=1):
    # convert the result to a spectrum vs photon energy
    global dRidkH1
    dRidkH1 = 0
-   title = "collimated photon beam spectrum, incoherent part only"
-   dRidkH1 = TH1D("dRidkH1", title, nbins, Emin, Emax)
+   if collimated:
+      title = "collimated photon beam spectrum, incoherent part only"
+   else:
+      title = "uncollimated photon beam spectrum, incoherent part only"
+   dRidkH1 = ROOT.TH1D("dRidkH1", title, nbins, Emin, Emax)
    dRidkH1.GetXaxis().SetRangeUser(Emin + (Emax - Emin)/10., Emax)
    for i in range(0, nbins):
       dRidkH1.Fill(xvals[i] * E0, yvals[i] / E0)
@@ -283,8 +333,11 @@ def plotTotal(collimated=1):
    # convert the result to a spectrum vs photon energy
    global dRtdkH1
    dRtdkH1 = 0
-   title = "collimated photon beam spectrum"
-   dRtdkH1 = TH1D("dRtdkH1", title, nbins, Emin, Emax)
+   if collimated:
+      title = "collimated photon beam spectrum"
+   else:
+      title = "uncollimated photon beam spectrum"
+   dRtdkH1 = ROOT.TH1D("dRtdkH1", title, nbins, Emin, Emax)
    dRtdkH1.GetXaxis().SetRangeUser(Emin + (Emax - Emin)/10., Emax)
    for i in range(0, nbins):
       dRtdkH1.Fill(xvals[i] * E0, yvals[i] / E0)
@@ -322,8 +375,11 @@ def plotPolarization(collimated=1):
    # convert the result to a spectrum vs photon energy
    global polarH1
    polarH1 = 0
-   title = "collimated photon beam polarization"
-   polarH1 = TH1D("polarH1", title, nbins, Emin, Emax)
+   if collimated:
+      title = "collimated photon beam polarization"
+   else:
+      title = "uncollimated photon beam polarization"
+   polarH1 = ROOT.TH1D("polarH1", title, nbins, Emin, Emax)
    for i in range(0, nbins):
       polarH1.Fill(xvals[i] * E0, ypols[i] / yvals[i])
    polarH1.GetXaxis().SetTitle("E_{#gamma} (GeV)")
@@ -449,3 +505,74 @@ def plotPolarization_rc(rchist, collimated=1):
    polarRC.SetStats(0)
    polarRC.Draw("hist")
    return polarRC
+
+# Below are a few functions that are useful in evaluating the
+# suppression of the low-energy bremsstrahlung tail due to the
+# LPM effect -- see RevModPhys.17.1501 and RevPhys.103.1811.
+
+hbarc = 0.197e-15 # GeV.m
+me = 511e-6       # electron mass, GeV/c^2
+Es = 21.2e-3      # multiple-scattering screening parameter, GeV
+X0 = 0.120        # m, radiation length of diamond
+
+import math
+alphaQED = 1 / 137.
+X0=6e-3
+E0=25
+E_LPM = me**2 * X0 * alphaQED / (4 * math.pi * hbarc)
+k_LPM = E0**2 /E_LPM
+
+def LPMfl0(k):
+   """
+   Return the free space formation length of bremsstrahlung at 
+   energy k. Units are meters.
+   """
+   return 2 * hbarc * E0 * (E0 - k) / (k * me**2)
+
+def LPMfl(k):
+   """
+   Return the in-medium formation length of bremsstrahlung at 
+   energy k. Units are meters.
+   """
+   A = Es**2 / (2 * me**2 * X0)
+   B = 1
+   C = -LPMfl0(k)
+   return (-B + (B**2 - 4 * A * C)**0.5) / (2 * A)
+
+def LPMStrong(k):
+   """
+   Return the in-medium formation length of bremsstrahlung at 
+   energy k. Units are meters.
+   """
+   return (k * E_LPM / (E0 * (E0 - k)))**0.5
+
+def plot_LPMfl(Emax):
+   """
+   Make a plot of the formation lengths vs photon energy.
+   """
+   h0 = ROOT.TH1D("h0", "bremsstrahlung formation lengths vs k",
+                  100, 0, Emax * 1e3)
+   h0.SetStats(0)
+   h0.SetLineColor(1)
+   h0.SetLineWidth(2)
+   h0.GetXaxis().SetTitle("photon energy (MeV)")
+   h0.GetYaxis().SetTitle("formation lengths (m)")
+   h0.GetYaxis().SetTitleOffset(1.5)
+   h1 = h0.Clone("h1")
+   h2 = h0.Clone("h2")
+   h2.SetTitle("LPM suppression S(E) in continuous medium (semiclassical)")
+   h2.GetYaxis().SetTitle("S factor")
+   h3 = h2.Clone("h3")
+   for i in range(1, h0.GetNbinsX() + 1):
+      E = h0.GetXaxis().GetBinCenter(i) * 1e-3
+      h0.SetBinContent(i, LPMfl0(E))
+      h1.SetBinContent(i, LPMfl(E))
+      h2.SetBinContent(i, LPMfl(E) / LPMfl0(E))
+      h3.SetBinContent(i, LPMStrong(E))
+   h0.Draw('c')
+   h1.SetLineColor(2)
+   h2.SetLineColor(6)
+   h3.SetLineColor(4)
+   h1.Draw('c same')
+   return h0,h1,h2,h3
+
